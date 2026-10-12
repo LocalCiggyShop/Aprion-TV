@@ -1,0 +1,6 @@
+{
+  "Url": "https://repo.maven.apache.org/maven2/org/mozilla/rhino/1.8.1/rhino-1.8.1-sources.jar",
+  "Sha256": "2303A0E5AA222FAAE0B95865C25442DA89EC14C0FC81AC1608F2A6095E3D2459",
+  "PublishedSha1": "6955FD7669723C906266766512FA79F022872E43",
+  "Note": "Publisher SHA-512 endpoint was unavailable. SHA-1 is a supplemental consistency check; TLS origin and recorded SHA-256 identify this source archive. Not executed."
+}
