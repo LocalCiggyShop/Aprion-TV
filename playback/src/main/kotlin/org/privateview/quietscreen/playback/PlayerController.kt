@@ -101,7 +101,7 @@ class PlayerController(private val context: Context, private val resolver: Strea
         mutable.value = mutable.value.copy(text = text)
     }
 
-    fun start(id: VideoId, maxHeight: Int = 1080, requireSeparate: Boolean = false) {
+    fun start(id: VideoId, maxHeight: Int = 1080, requireSeparate: Boolean = false, startPositionMs: Long = 0) {
         if (released) return
         budget = RecoveryBudget(); height = maxHeight; separate = requireSeparate
         fixedQuality = false; manifestFallbackUsed = false
@@ -109,7 +109,7 @@ class PlayerController(private val context: Context, private val resolver: Strea
         generation++; job?.cancel(); resolver.cancelPending(); plan = null
         mutable.value = PlaybackStatus(text = "Resolving video", requestedHeight = height)
         val current = generation
-        job = scope.launch { resolveAndPrepare(id, current, 0, true) }
+        job = scope.launch { resolveAndPrepare(id, current, startPositionMs.coerceAtLeast(0), true) }
     }
     private suspend fun resolveAndPrepare(id: VideoId, current: Int, position: Long, play: Boolean) {
         try {

@@ -40,6 +40,7 @@ import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.Text
 import org.privateview.quietscreen.AppSettings
 import org.privateview.quietscreen.BuildConfig
+import org.privateview.quietscreen.Personalization
 import org.privateview.quietscreen.ThumbnailLoader
 import org.privateview.quietscreen.core.VideoSummary
 import org.privateview.quietscreen.presentation.SearchViewModel
@@ -166,22 +167,23 @@ fun SearchScreen(model: SearchViewModel, home: () -> Unit, play: (VideoSummary) 
 }
 
 @Composable
-private fun Thumbnail(url: String?) {
+internal fun Thumbnail(url: String?, modifier: Modifier = Modifier.size(112.dp, 63.dp)) {
     var bitmap by remember(url) { mutableStateOf<android.graphics.Bitmap?>(null) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(url, lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { bitmap = url?.let { ThumbnailLoader.load(it) } }
     }
-    bitmap?.let { Image(it.asImageBitmap(), "Video thumbnail", Modifier.size(112.dp, 63.dp)) }
-        ?: Box(Modifier.size(112.dp, 63.dp).background(Ink))
+    bitmap?.let { Image(it.asImageBitmap(), null, modifier, contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
+        ?: Box(modifier.background(Ink), contentAlignment = Alignment.Center) { Text("QUIETSCREEN", color = Muted, fontSize = 11.sp) }
 }
 
 @Composable
-fun SettingsScreen(settings: AppSettings, updates: UpdateManager, clearSession: () -> Unit, home: () -> Unit) {
+fun SettingsScreen(settings: AppSettings, updates: UpdateManager, personalization: Personalization, clearSession: () -> Unit, home: () -> Unit) {
     val updateState by updates.state.collectAsStateWithLifecycle()
     val first = remember { FocusRequester() }
     var height by remember { mutableIntStateOf(settings.maxHeight) }
     var message by remember { mutableStateOf("Preferences stay on this device.") }
+    var personalized by remember { mutableStateOf(personalization.enabled) }
     LaunchedEffect(Unit) { first.requestFocus() }
     BackHandler(onBack = home)
     Column(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 27.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -196,10 +198,21 @@ fun SettingsScreen(settings: AppSettings, updates: UpdateManager, clearSession: 
         }
         Text("Choose available audio tracks during playback.", color = Muted, fontSize = 14.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            TvAction("Clear current search") { clearSession(); message = "Current search and results cleared." }
+            TvAction("Clear browsing session") { clearSession(); message = "Search, browsing results, Continue watching and saved completion IDs cleared." }
             TvAction("Reset preferences") { settings.reset(); height = settings.maxHeight; message = "Playback preferences reset." }
         }
         Text(message, color = Mint, fontSize = 14.sp)
+        Text("Genre recommendations", color = Cloud, fontSize = 19.sp)
+        Text("Home starts with eight diverse genres. When enabled, actual watch time and estimated completion bring preferred genres first. Repeated enjoyable sessions matter more than one very long video; early exits gently reduce a genre's score. Search playback does not train these preferences.", color = Muted, fontSize = 14.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            TvAction("Personalization: " + if (personalized) "On" else "Off") {
+                personalized = !personalized; personalization.enabled = personalized
+                message = if (personalized) "Genre learning enabled." else "Genre learning paused. Saved scores stay on this device until reset."
+            }
+            TvAction("Reset personalization") { personalization.reset(); message = "Genre scores erased. Home will return to its diverse starting order." }
+        }
+        Text("Personalization saves eight bounded genre scores privately on this device. Reset personalization erases those scores; turning it off pauses learning and uses the starting order. Continue watching separately saves up to 24 unfinished videos (public ID, title, channel, position, duration and source genre) and the last 100 completed IDs to keep finished replays out. Clear browsing session erases that list and completion IDs. Search text and playback URLs are not saved. No database, account, telemetry or external recommendation service. Android backups are disabled.", color = Muted, fontSize = 14.sp)
+        Text("Browsing sends fixed genre searches to YouTube; thumbnails and playback contact YouTube/CDNs. Providers see those requests and your IP address. Signed updates contact GitHub. Genre scores are never uploaded.", color = Muted, fontSize = 14.sp)
         Text("App updates", color = Cloud, fontSize = 19.sp)
         Text(updateState.message, color = Muted, fontSize = 14.sp)
         Text("Updates download while Home or Settings is open. Android may ask you to approve installation.", color = Muted, fontSize = 14.sp)
@@ -221,7 +234,7 @@ fun AboutScreen(home: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(40.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Heading("About QuietScreen", "Version ${BuildConfig.VERSION_NAME}")
         Text("An independent player for public videos. No account is needed.", color = Cloud, fontSize = 21.sp)
-        Text("Search and viewing data are not saved. Playback preferences are stored only on this device.\n\nVideo availability can change. Restricted and protected videos are unsupported.\n\nUse Back to leave playback; Home stops playback while you use another app.", color = Muted, fontSize = 17.sp, lineHeight = 26.sp)
+        Text("Search stays in memory. Playback/update preferences and eight genre scores are private on-device. Continue watching saves up to 24 unfinished video records and 100 completed IDs; Clear browsing session erases them. Backups are disabled. Reset or pause personalization in Settings. No accounts, telemetry or external recommender.\n\nBrowsing, search, thumbnails and playback contact YouTube/CDNs; updates contact GitHub. Providers see normal requests and your IP. Genre scores and saved viewing records are never uploaded. Resuming requests the selected video's public ID from YouTube as ordinary playback does.\n\nVideo availability can change. Restricted/protected videos are unsupported. Back leaves playback; Home stops playback.", color = Muted, fontSize = 15.sp, lineHeight = 22.sp)
         Text("Open-source software · GPL-3.0-or-later\nBuilt with AndroidX Media3 and NewPipeExtractor. See the accompanying source and notices.", color = Muted, fontSize = 14.sp)
         Spacer(Modifier.weight(1f))
         TvAction("Back to Home", Modifier.focusRequester(first), onClick = home)

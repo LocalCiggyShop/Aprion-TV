@@ -36,11 +36,14 @@ import kotlinx.coroutines.isActive
 import org.privateview.quietscreen.AppSettings
 import org.privateview.quietscreen.core.StreamResolver
 import org.privateview.quietscreen.core.VideoSummary
+import org.privateview.quietscreen.core.WatchTime
 import org.privateview.quietscreen.playback.PlayerController
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSettings, back: () -> Unit) {
+fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSettings,
+    watched: (Long, Long) -> Unit = { _, _ -> }, startPositionMs: Long = 0,
+    progress: (Long, Long, Boolean) -> Unit = { _, _, _ -> }, back: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -61,11 +64,15 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
     var duration by remember { mutableLongStateOf(0) }
     var playing by remember { mutableStateOf(false) }
     var released by remember { mutableStateOf(false) }
+    val watchTime = remember(controller) { WatchTime() }
+    val recordWatch by rememberUpdatedState(watched)
+    val recordProgress by rememberUpdatedState(progress)
+    var checkpoint by remember { mutableLongStateOf(0) }
 
     LaunchedEffect(controller) {
         // External captions failed qualification; keep them disabled in this trial.
         controller.setDefaultCaptions(false)
-        controller.start(video.id, settings.maxHeight)
+        controller.start(video.id, settings.maxHeight, startPositionMs = startPositionMs)
     }
     LaunchedEffect(controller, lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -73,6 +80,12 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
                 position = controller.player.currentPosition.coerceAtLeast(0)
                 duration = controller.player.duration.takeIf { it > 0 } ?: 0
                 playing = controller.player.isPlaying
+                watchTime.sample(android.os.SystemClock.elapsedRealtime(), position, playing)
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (playing && now - checkpoint >= 5_000) {
+                    checkpoint = now
+                    recordProgress(position, duration, false)
+                }
                 delay(500)
             }
         }
@@ -80,7 +93,26 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
     DisposableEffect(controller, lifecycle) {
         val window = (context as? ComponentActivity)?.window
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        val watchListener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (!released && playbackState == Player.STATE_ENDED) recordProgress(controller.player.currentPosition.coerceAtLeast(0),
+                    controller.player.duration.takeIf { it > 0 } ?: duration, true)
+            }
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (!released) watchTime.sample(android.os.SystemClock.elapsedRealtime(), controller.player.currentPosition.coerceAtLeast(0), isPlaying)
+            }
+            override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                watchTime.discontinuity()
+            }
+        }
+        controller.player.addListener(watchListener)
         fun release() {
+            if (released) return
+            watchTime.sample(android.os.SystemClock.elapsedRealtime(), controller.player.currentPosition.coerceAtLeast(0), false)
+            recordWatch(watchTime.watchedMs, controller.player.duration.takeIf { it > 0 } ?: duration)
+            recordProgress(controller.player.currentPosition.coerceAtLeast(0), controller.player.duration.takeIf { it > 0 } ?: duration,
+                controller.player.playbackState == Player.STATE_ENDED)
+            controller.player.removeListener(watchListener)
             released = true; view.player = null; controller.release()
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
@@ -155,7 +187,7 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
                     TvAction("Quality", Modifier.focusRequester(qualityFocus), enabled = controller.plan != null) { lastControl = "quality"; menu = "quality" }
                     TvAction("Audio", Modifier.focusRequester(audioFocus), enabled = controller.plan != null) { lastControl = "audio"; menu = "audio" }
                 }
-                if (status.error != null) TvAction("Try playback again") { controller.start(video.id, settings.maxHeight) }
+                if (status.error != null) TvAction("Try playback again") { controller.start(video.id, settings.maxHeight, startPositionMs = position.takeIf { it > 0 } ?: startPositionMs) }
             }
         }
         menu?.let { currentMenu ->

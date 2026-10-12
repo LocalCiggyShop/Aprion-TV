@@ -16,7 +16,7 @@ android {
         versionCode = 1
         versionName = "1"
         manifestPlaceholders["probeTarget"] = providers.gradleProperty("probeTarget").orElse("org.privateview.quietscreen.trial").get().also {
-            require(it in setOf("org.privateview.quietscreen.trial", "org.privateview.quietscreen"))
+            require(it in setOf("org.privateview.quietscreen.trial", "org.privateview.quietscreen", "org.privateview.quietscreen.debug"))
         }
     }
     sourceSets.getByName("main").java.srcDir("../app/src/androidTest/java")

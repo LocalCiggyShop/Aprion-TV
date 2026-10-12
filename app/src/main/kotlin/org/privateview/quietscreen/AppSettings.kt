@@ -2,7 +2,7 @@ package org.privateview.quietscreen
 
 import android.content.Context
 
-/** Only playback preferences are persisted. Search/results/watch data stay in memory. */
+/** Playback settings; separate Personalization stores bounded genre aggregates, never video history. */
 class AppSettings(context: Context) {
     private val preferences = context.getSharedPreferences("playback_preferences", Context.MODE_PRIVATE)
     var maxHeight: Int

@@ -78,26 +78,28 @@ class TvContractTest {
         return activity
     }
 
-    @Test fun homeSettingsAndBackUseRemoteAndStayIdle() {
+    @Test fun homeSettingsAndBackUseRemoteAndSettingsStayIdle() {
         NetworkAudit.begin()
         val activity = launch()
         val settings = AppSettings(instrument.targetContext)
         val originalHeight = settings.maxHeight
         val originalCaptions = settings.captions
         try {
-            Thread.sleep(1500)
-            assertTrue("Home must not fetch recommendations or thumbnails", NetworkAudit.snapshot().isEmpty())
-            key(KeyEvent.KEYCODE_DPAD_RIGHT); key(KeyEvent.KEYCODE_DPAD_CENTER)
+            waitText("Science & technology")
+            key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_CENTER)
             waitText("Maximum video resolution")
+            Thread.sleep(1000)
+            val stopped = NetworkAudit.snapshot()
+            Thread.sleep(1000)
+            assertEquals("Catalog requests stop in Settings", stopped, NetworkAudit.snapshot())
             key(KeyEvent.KEYCODE_DPAD_RIGHT); key(KeyEvent.KEYCODE_DPAD_CENTER)
             assertEquals("Remote selects saved 720p cap", 720, settings.maxHeight)
             key(KeyEvent.KEYCODE_BACK); waitText("Search videos")
-            // Home restores Settings, so Right now reaches About.
-            key(KeyEvent.KEYCODE_DPAD_RIGHT); key(KeyEvent.KEYCODE_DPAD_CENTER)
+            // Home restores Settings in the vertical navigation rail.
+            key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_CENTER)
             waitText("About QuietScreen")
             key(KeyEvent.KEYCODE_BACK); waitText("Search videos")
-            assertTrue("Offline screens must not send network requests", NetworkAudit.snapshot().isEmpty())
-            println("TV_CONTRACT remoteHomeSettingsAbout=true savedSettings=true idleRequests=0")
+            println("TV_CONTRACT remoteHomeSettingsAbout=true savedSettings=true settingsIdle=true")
         } finally {
             settings.maxHeight = originalHeight; settings.captions = originalCaptions
             instrument.runOnMainSync { activity.finish() }
@@ -186,7 +188,7 @@ class TvContractTest {
         NetworkAudit.begin()
         val activity = launch()
         try {
-            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_CENTER)
             waitText("Title, channel or video ID")
             val edit = nodes().firstOrNull { it.isEditable } ?: error("Search input not accessible")
             assertTrue(edit.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {

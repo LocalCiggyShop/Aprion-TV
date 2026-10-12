@@ -70,11 +70,13 @@ class NewPipeCatalog : VideoCatalog, StreamResolver {
         return extract {
             val service = NewPipe.getService("YouTube")
             val e = service.getSearchExtractor(clean, listOf("videos"), "")
-            val page = try { if (cursor == null) { pages.clear(); e.fetchPage(); e.initialPage }
-                else { val stored = pages.remove(cursor) ?: throw AppException(ErrorCode.UPSTREAM_CHANGED)
+            val page = try { if (cursor == null) { e.fetchPage(); e.initialPage }
+                else { val stored = pages[cursor] ?: throw AppException(ErrorCode.UPSTREAM_CHANGED)
                     if (stored.first != clean) throw AppException(ErrorCode.UPSTREAM_CHANGED)
                     e.getPage(stored.second) }
             } catch (_: NothingFoundException) { return@extract CatalogPage(emptyList(), null) }
+            // Retain opaque cursors within the bounded cache: cancellation can arrive
+            // after extraction succeeds but before the caller accepts the result.
             val items = page.items.filterIsInstance<StreamInfoItem>().take(50).mapNotNull { item ->
                 runCatching {
                     val id = service.streamLHFactory.getId(item.url)
@@ -86,7 +88,7 @@ class NewPipeCatalog : VideoCatalog, StreamResolver {
             val nextPage = page.nextPage
             val token = if (nextPage != null && Page.isValid(nextPage)) UUID.randomUUID().toString().also {
                 pages[it] = clean to nextPage
-                while (pages.size > 3) pages.remove(pages.keys.first())
+                while (pages.size > 16) pages.remove(pages.keys.first())
             } else null
             CatalogPage(items, token,
                 if (cursor == null) runCatching { e.searchSuggestion?.take(200) }.getOrNull() else null,
