@@ -1,0 +1,23 @@
+name: Public source security
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - name: Enable full Windows source paths before checkout
+        shell: pwsh
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # verified official v4
+        with:
+          persist-credentials: false
+      - name: Check Git-eligible source for private material and common secrets
+        shell: pwsh
+        run: ./scripts/Check-PublicSource.ps1 -Mode Worktree
+      - name: Run pinned provider-secret scan including source archives
+        shell: pwsh
+        run: ./scripts/Run-SecretAudit.ps1 -Install

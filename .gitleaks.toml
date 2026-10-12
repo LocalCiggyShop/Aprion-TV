@@ -1,0 +1,11 @@
+title = "QuietScreen public-source checks"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Explicit non-credential replacements in recorded upstream tests only"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''(^|[/\\])third_party[/\\]sources[/\\].*[/\\]src[/\\]test[/\\]''']
+regexes = ['''^TEST_ONLY_(GOOGLE_KEY|TOKEN)_[0-9A-F]{19}$''']

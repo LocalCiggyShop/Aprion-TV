@@ -6,7 +6,7 @@ import org.junit.Test
 import java.io.File
 import org.privateview.quietscreen.updates.UpdateManager
 
-/** Self replacement terminates instrumentation. Verify version 5 externally, then restore version 4. */
+/** Self replacement terminates instrumentation. Verify fixture version 6 externally, then restore the actual app. */
 class UpdateInstallTest {
     @Test fun installsVerifiedSelfUpdateOnOwnedEmulator() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -24,6 +24,6 @@ class UpdateInstallTest {
             updates.install()
         }
         Thread.sleep(20000)
-        throw AssertionError("Expected Android to replace the running version 4 process; inspect installer result")
+        throw AssertionError("Expected Android to replace the running process; inspect installer result")
     }
 }

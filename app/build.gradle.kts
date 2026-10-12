@@ -17,8 +17,8 @@ android {
         applicationId = "org.privateview.quietscreen"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.3.0-beta"
+        versionCode = 5
+        versionName = "0.3.1-beta"
         buildConfigField("String", "UPDATE_OWNER", "\"$updateOwner\"")
         buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
         buildConfigField("String", "UPDATE_BRANCH", "\"$updateBranch\"")

@@ -54,12 +54,17 @@ third_party/maven/**/_remote.repositories
 !/scripts/
 !/release/
 !/updates/
+!/.githooks/
+!/.github/
+!/.gitleaks.toml
 scripts/*
 !scripts/Env.ps1
 !scripts/ProjectRuntime.ps1
 !scripts/Build-Prototype.ps1
 !scripts/Build-Dependencies.ps1
 !scripts/Prepare-PublicSource.ps1
+!scripts/Check-PublicSource.ps1
+!scripts/Run-SecretAudit.ps1
 !scripts/Release-Key.ps1
 !scripts/Backup-ReleaseKey.ps1
 !scripts/Sign-Release.ps1

@@ -15,7 +15,7 @@ class UpdateApkTest {
     private fun fixture(name: String): File = File(context.cacheDir, name).apply {
         instrumentation.context.assets.open(name).use { input -> outputStream().use { input.copyTo(it) } }
     }
-    private fun descriptor(file: File) = UpdateDescriptor(context.packageName, 5, "0.3.1-updater-test", 26, file.length(),
+    private fun descriptor(file: File) = UpdateDescriptor(context.packageName, 6, "0.3.2-updater-test", 26, file.length(),
         MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) },
         "https://github.com/LocalCiggyShop/QuietScreen/releases/download/test/fixture.apk")
     private fun reject(action: () -> Unit) {
