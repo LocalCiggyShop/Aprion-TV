@@ -46,6 +46,9 @@ public final class TrialNativeInstrumentation extends Instrumentation {
                 security(); passed++;
                 browse(); passed++;
                 result.putString("stream", "\nOK (2 browsing native checks)\n");
+            } else if ("updateCheck".equals(check)) {
+                updateCheck(); passed++;
+                result.putString("stream", "\nOK (1 production update check)\n");
             } else if ("continue".equals(check)) {
                 continueWatching(); passed++;
                 result.putString("stream", "\nOK (1 continue watching native check)\n");
@@ -250,6 +253,32 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         waitFor("Find your next watch", 20, false);
         require(!texts().contains("Playback Playing"), "Reentry auto-played");
         marker("TRIAL_BROWSE nativePlayback=true boundedWatch35s=true genreLearningRecorded=true paused=true exactCardFocusRestored=true remoteVerticalRows=true homeReentryNoAutoPlay=true");
+    }
+    private void updateCheck() {
+        launch(); key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN);
+        require(focused().contains("Settings"), "Settings focus not selected");
+        key(KeyEvent.KEYCODE_DPAD_CENTER); waitFor("Maximum video resolution", 15, false);
+        AccessibilityNodeInfo checkButton = null;
+        for (int i = 0; i < 12 && checkButton == null; i++) {
+            for (AccessibilityNodeInfo node : nodes()) if (node.isClickable() && label(node).trim().equals("Check for updates")) { checkButton = node; break; }
+            if (checkButton == null) key(KeyEvent.KEYCODE_DPAD_DOWN);
+        }
+        require(checkButton != null, "Manual update button unavailable");
+        require(checkButton.performAction(AccessibilityNodeInfo.ACTION_FOCUS), "Manual update button focus refused");
+        SystemClock.sleep(500);
+        require(focused().contains("Check for updates"), "Manual update focus not verified");
+        key(KeyEvent.KEYCODE_DPAD_CENTER);
+        long deadline = SystemClock.elapsedRealtime() + 90000;
+        String result = "";
+        while (SystemClock.elapsedRealtime() < deadline) {
+            result = texts();
+            if (result.contains("QS-U-OK")) break;
+            if (result.contains("Update failed while")) throw new AssertionError("Manual update: " + result.substring(Math.max(0, result.indexOf("Update failed while")), Math.min(result.length(), result.indexOf("Update failed while") + 700)));
+            SystemClock.sleep(300);
+        }
+        require(result.contains("QS-U-OK") && result.contains("Android API") && result.contains("TV time"), "Successful update diagnostic missing");
+        require(result.contains("You have the latest version."), "Unexpected update state");
+        marker("UPDATE_PRODUCTION manualCheck=true signedFeedVerified=true actionableDetail=true sdk=" + android.os.Build.VERSION.SDK_INT);
     }
     private void continueWatching() throws Exception {
         String record = "{\"videos\":[{\"id\":\"jNQXAC9IVRw\",\"title\":\"Me at the zoo\",\"channel\":\"jawed\",\"position\":5000,\"duration\":19000,\"genre\":\"\"}],\"finished\":[]}";

@@ -12,11 +12,12 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
+import java.io.IOException
 import org.privateview.quietscreen.BuildConfig
-import org.privateview.quietscreen.core.UpdateManifest
+import org.privateview.quietscreen.core.*
 
 data class UpdateStatus(val message: String = "Updates are checked automatically when you open the app.",
-    val busy: Boolean = false, val ready: Boolean = false, val automatic: Boolean = true)
+    val busy: Boolean = false, val ready: Boolean = false, val automatic: Boolean = true, val detail: String? = null)
 
 class UpdateManager private constructor(private val context: Context) {
     private val prefs = context.getSharedPreferences("updates", Context.MODE_PRIVATE)
@@ -32,6 +33,16 @@ class UpdateManager private constructor(private val context: Context) {
     private val apk = File(directory, "candidate.apk")
     private val envelope = File(directory, "candidate.qsu")
     private val configured get() = UpdateManifest.validateRepository(BuildConfig.UPDATE_OWNER, BuildConfig.UPDATE_REPO)
+    private fun detail(code: String, source: UpdateSource? = null, priorCode: String? = null): String {
+        val date = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm Z", java.util.Locale.ROOT).format(java.util.Date())
+        return "$code · ${source?.label ?: "Local app / Android installer"} · ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · Android API ${Build.VERSION.SDK_INT} · TV time $date" +
+            (priorCode?.let { " · Primary feed: $it" } ?: "")
+    }
+    private fun failed(error: Throwable, step: UpdateStep, source: UpdateSource? = null, priorCode: String? = null) {
+        val diagnostic = UpdateDiagnostics.from(error, step)
+        mutable.value = mutable.value.copy(message = diagnostic.message, detail = detail(diagnostic.code, source, priorCode), busy = false, ready = false)
+    }
+    private fun <T> save(operation: () -> T): T = try { operation() } catch (_: IOException) { throw UpdateFailure(UpdateProblem.STORAGE) }
 
     fun automatic(enabled: Boolean) {
         prefs.edit().putBoolean("automatic", enabled).apply()
@@ -56,65 +67,83 @@ class UpdateManager private constructor(private val context: Context) {
     fun check() {
         if (!foreground || job?.isCompleted == false || installing) return
         if (!configured) { mutable.value = mutable.value.copy(message = "This development build has no public update location."); return }
+        if (context.packageName != "org.privateview.quietscreen") {
+            mutable.value = mutable.value.copy(message = "This test build has no production update feed. Install the official QuietScreen APK for signed updates.",
+                detail = detail("QS-U-TEST-BUILD"), busy = false, ready = false)
+            return
+        }
         transport.begin()
         job = scope.launch {
-            mutable.value = mutable.value.copy(message = "Checking for updates…", busy = true)
+            var step = UpdateStep.FEED
+            var source = UpdateSource.RAW
+            var repaired = false
+            var primary: UpdateDiagnostic? = null
+            mutable.value = mutable.value.copy(message = "Checking for updates…", busy = true, ready = false, detail = null)
             try {
                 val available = withContext(Dispatchers.IO) {
                     val current = UpdateApk.installed(context)
                     fun verify(bytes: ByteArray) = UpdateManifest.verify(bytes, UpdateApk.key(current), context.packageName,
                         UpdateApk.version(current), Build.VERSION.SDK_INT, BuildConfig.UPDATE_OWNER, BuildConfig.UPDATE_REPO)
-                    val feed = "https://raw.githubusercontent.com/${BuildConfig.UPDATE_OWNER}/${BuildConfig.UPDATE_REPO}/${BuildConfig.UPDATE_BRANCH}/updates/${context.packageName}.qsu"
-                    val bytes = transport.read(feed, true) { stream ->
+                    val feed = UpdateFeed(BuildConfig.UPDATE_OWNER, BuildConfig.UPDATE_REPO, BuildConfig.UPDATE_BRANCH, context.packageName)
+                    val fetched = feed.fetch(onFallback = { primary = UpdateDiagnostics.from(it, UpdateStep.FEED) }) { url, route ->
+                        ensureActive(); source = route
+                        transport.read(url, true) { stream ->
                         val output = java.io.ByteArrayOutputStream()
                         val buffer = ByteArray(1024)
                         while (true) {
+                            ensureActive()
                             val count = stream.read(buffer); if (count < 0) break
-                            require(output.size() + count <= UpdateManifest.MAX_ENVELOPE_BYTES)
+                            if (output.size() + count > UpdateManifest.MAX_ENVELOPE_BYTES) throw UpdateFailure(UpdateProblem.METADATA)
                             output.write(buffer, 0, count)
                         }
                         val result = output.toByteArray()
-                        require(result.size <= UpdateManifest.MAX_ENVELOPE_BYTES)
+                        if (result.isEmpty()) throw UpdateFailure(UpdateProblem.METADATA)
                         result
+                        }
                     }
+                    val bytes = fetched.bytes
+                    step = UpdateStep.MANIFEST
                     val candidate = verify(bytes)
                     if (candidate == null) { apk.delete(); envelope.delete(); null }
                     else {
-                        val cached = envelope.exists() && envelope.readBytes().contentEquals(bytes) && apk.exists()
-                        if (!cached) {
-                            apk.delete(); envelope.delete()
-                            val partial = File(directory, "candidate.part")
-                            try {
-                                transport.read(candidate.apkUrl, false) { stream ->
-                                    partial.outputStream().use { output ->
+                        repaired = UpdateCache.obtain(directory, bytes, verify = { file ->
+                            step = UpdateStep.APK; ensureActive(); UpdateApk.verify(context, file, candidate)
+                        }, download = { partial ->
+                            step = UpdateStep.DOWNLOAD
+                            mutable.value = mutable.value.copy(message = "Downloading update ${candidate.versionName}…")
+                            // One retry obtains a fresh short-lived redirect if GitHub's CDN
+                            // rejects an expired link. Every attempt retains the signed bounds.
+                            for (attempt in 0..1) {
+                                try { transport.read(candidate.apkUrl, false) { stream ->
+                                    val output = save { partial.outputStream() }
+                                    try {
                                         val buffer = ByteArray(32768); var total = 0L
                                         while (true) {
                                             ensureActive()
                                             val count = stream.read(buffer); if (count < 0) break
-                                            total += count; require(total <= candidate.apkBytes)
-                                            output.write(buffer, 0, count)
+                                            total += count
+                                            if (total > candidate.apkBytes) throw UpdateFailure(UpdateProblem.SIZE)
+                                            save { output.write(buffer, 0, count) }
                                         }
-                                        require(total == candidate.apkBytes)
-                                    }
+                                        if (total != candidate.apkBytes) throw UpdateFailure(UpdateProblem.SIZE)
+                                    } finally { save { output.close() } }
+                                }; break }
+                                catch (failure: UpdateFailure) {
+                                    if (attempt != 0 || failure.problem != UpdateProblem.HTTP || failure.httpStatus !in setOf(401, 403)) throw failure
+                                    partial.delete(); ensureActive()
                                 }
-                                UpdateApk.verify(context, partial, candidate)
-                                require(partial.renameTo(apk))
-                                envelope.writeBytes(bytes)
-                            } finally { partial.delete() }
-                        }
-                        UpdateApk.verify(context, apk, candidate)
+                            }
+                        }, checkpoint = { ensureActive() })
                         candidate
                     }
                 }
                 prefs.edit().putLong("lastCheck", System.currentTimeMillis()).apply()
-                mutable.value = mutable.value.copy(message = available?.let { "Update ${it.versionName} downloaded and verified." } ?: "You have the latest version.", busy = false, ready = available != null)
+                mutable.value = mutable.value.copy(message = available?.let { "Update ${it.versionName} downloaded and verified." } ?: "You have the latest version.", busy = false, ready = available != null,
+                    detail = detail(if (repaired) "QS-U-OK-CACHE-REPAIRED" else "QS-U-OK", source, primary?.code))
                 if (available != null && foreground && mutable.value.automatic &&
                     prefs.getLong("attemptedVersion", 0) != available.versionCode && context.packageManager.canRequestPackageInstalls()) install()
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) {
-                // Never expose network URLs, CDN tokens, certificate details or raw server errors.
-                mutable.value = mutable.value.copy(message = "Update check failed. Try again later.", busy = false, ready = false)
-            }
+            catch (error: Exception) { failed(error, step, source, primary?.code) }
         }
     }
 
@@ -123,18 +152,18 @@ class UpdateManager private constructor(private val context: Context) {
         confirmation?.let { intent ->
             confirmation = null
             try { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            catch (_: Exception) { mutable.value = mutable.value.copy(message = "Installation could not open. Try again.") }
+            catch (_: Exception) { failed(UpdateFailure(UpdateProblem.INSTALLER), UpdateStep.INSTALL) }
             return
         }
         if (!context.packageManager.canRequestPackageInstalls()) {
             mutable.value = mutable.value.copy(message = "Allow updates from QuietScreen in Android settings, then return here.")
             try { context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            catch (_: Exception) { mutable.value = mutable.value.copy(message = "Enable installation from QuietScreen in your TV's security settings.") }
+            catch (_: Exception) { failed(UpdateFailure(UpdateProblem.INSTALL_PERMISSION), UpdateStep.INSTALL) }
             return
         }
         installing = true
         job = scope.launch {
-            mutable.value = mutable.value.copy(message = "Preparing installation…", busy = true)
+            mutable.value = mutable.value.copy(message = "Preparing installation…", busy = true, detail = null)
             try {
                 withContext(Dispatchers.IO) {
                     val current = UpdateApk.installed(context)
@@ -169,7 +198,7 @@ class UpdateManager private constructor(private val context: Context) {
                     } catch (failure: Exception) { installer.abandonSession(id); throw failure }
                 }
             } catch (cancelled: CancellationException) { installing = false; mutable.value = mutable.value.copy(busy = false); throw cancelled }
-            catch (_: Exception) { installing = false; mutable.value = mutable.value.copy(message = "Update installation failed. Try again.", busy = false) }
+            catch (error: Exception) { installing = false; failed(error, UpdateStep.INSTALL) }
         }
     }
 
@@ -183,7 +212,20 @@ class UpdateManager private constructor(private val context: Context) {
                 if (foreground && next != null) install()
             }
             PackageInstaller.STATUS_SUCCESS -> { installing = false; apk.delete(); envelope.delete(); mutable.value = mutable.value.copy(message = "Update installed. Reopen QuietScreen.", busy = false, ready = false) }
-            else -> { installing = false; confirmation = null; mutable.value = mutable.value.copy(message = "Update was not installed. You can try again.", busy = false, ready = true) }
+            else -> {
+                installing = false; confirmation = null
+                val reason = when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
+                    PackageInstaller.STATUS_FAILURE_ABORTED -> UpdateProblem.INSTALL_ABORTED
+                    PackageInstaller.STATUS_FAILURE_BLOCKED -> UpdateProblem.INSTALL_BLOCKED
+                    PackageInstaller.STATUS_FAILURE_STORAGE -> UpdateProblem.STORAGE
+                    PackageInstaller.STATUS_FAILURE_INCOMPATIBLE -> UpdateProblem.INSTALL_INCOMPATIBLE
+                    PackageInstaller.STATUS_FAILURE_CONFLICT -> UpdateProblem.INSTALL_CONFLICT
+                    PackageInstaller.STATUS_FAILURE_INVALID -> UpdateProblem.INSTALL_INVALID
+                    else -> UpdateProblem.INSTALLER
+                }
+                failed(UpdateFailure(reason), UpdateStep.INSTALL)
+                mutable.value = mutable.value.copy(ready = apk.exists() && envelope.exists())
+            }
         }
     }
 

@@ -215,6 +215,7 @@ fun SettingsScreen(settings: AppSettings, updates: UpdateManager, personalizatio
         Text("Browsing sends fixed genre searches to YouTube; thumbnails and playback contact YouTube/CDNs. Providers see those requests and your IP address. Signed updates contact GitHub. Genre scores are never uploaded.", color = Muted, fontSize = 14.sp)
         Text("App updates", color = Cloud, fontSize = 19.sp)
         Text(updateState.message, color = Muted, fontSize = 14.sp)
+        updateState.detail?.let { Text(it, color = Muted, fontSize = 12.sp) }
         Text("Updates download while Home or Settings is open. Android may ask you to approve installation.", color = Muted, fontSize = 14.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             TvAction("Automatic updates: " + if (updateState.automatic) "On" else "Off") { updates.automatic(!updateState.automatic) }

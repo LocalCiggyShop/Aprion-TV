@@ -2,7 +2,7 @@
 
 An independent Android TV player for public YouTube videos, with native Media3 playback, remote navigation, search, quality and audio-track controls. No account, analytics or ad SDK is included. This project is not affiliated with YouTube or Google.
 
-Version **0.3.2-beta** (version code 6) adds TV browsing, private genre recommendations and Continue watching, retaining the prior security and publication protections. Physical-TV compatibility and audio/sync testing remain pending. Captions are unsupported. The unofficial extraction method can break when YouTube changes; ad-free playback is not guaranteed.
+Version **0.3.3-beta** (version code 7) repairs damaged update-cache retries and adds restricted GitHub feed fallback and actionable local update diagnostics, retaining TV browsing, private recommendations, Continue watching and signed-update protections. Physical-TV compatibility and audio/sync testing remain pending. Captions are unsupported. The unofficial extraction method can break when YouTube changes; ad-free playback is not guaranteed.
 
 The app checks for and downloads updates while Home or Settings is open. Signed metadata and the APK must match the installed app's package, higher version and certificate. Android may require installation approval. Updates use the configured LocalCiggyShop/QuietScreen GitHub repository.
 
