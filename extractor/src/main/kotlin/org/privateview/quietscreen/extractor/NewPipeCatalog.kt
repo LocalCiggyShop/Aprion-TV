@@ -24,7 +24,16 @@ import kotlin.coroutines.coroutineContext
 class NewPipeCatalog : VideoCatalog, StreamResolver {
     private val downloader = NewPipeDownloader()
     private val pages = LinkedHashMap<String, Pair<String, Page>>()
+    private val channelPath = Regex("/channel/(UC[A-Za-z0-9_-]{22})(?:$|[/?])")
     override fun cancelPending() = downloader.cancel()
+    private fun summary(item: StreamInfoItem): VideoSummary? = runCatching {
+        val service = NewPipe.getService("YouTube")
+        val channelId = channelPath.find(item.uploaderUrl.orEmpty())?.groupValues?.get(1)
+        VideoSummary(VideoId(service.streamLHFactory.getId(item.url)), item.name.take(500), item.uploaderName.orEmpty().take(200),
+            item.thumbnails.firstOrNull()?.url?.takeIf { runCatching { NetworkPolicy.validate(it, NetworkRole.THUMBNAIL) }.isSuccess },
+            item.duration.takeIf { it >= 0 }, item.streamType == StreamType.LIVE_STREAM, channelId,
+            runCatching { item.uploadDate?.instant?.toEpochMilli()?.takeIf { it > 0 } }.getOrNull())
+    }.getOrNull()
 
     private suspend fun <T> extract(block: () -> T): T = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -64,33 +73,28 @@ class NewPipeCatalog : VideoCatalog, StreamResolver {
         }
     }
 
-    override suspend fun search(query: String, cursor: String?): CatalogPage {
+    override suspend fun search(query: String, cursor: String?) = search(query, cursor, SearchSort.RELEVANCE)
+    override suspend fun search(query: String, cursor: String?, sort: SearchSort): CatalogPage {
         val clean = query.trim()
         if (clean.isEmpty() || clean.length > 200) throw AppException(ErrorCode.INVALID_QUERY)
+        val pageKey = "${sort.name}\u0000$clean"
         return extract {
             val service = NewPipe.getService("YouTube")
             val e = service.getSearchExtractor(clean, listOf("videos"), "")
             val page = try { if (cursor == null) { e.fetchPage(); e.initialPage }
                 else { val stored = pages[cursor] ?: throw AppException(ErrorCode.UPSTREAM_CHANGED)
-                    if (stored.first != clean) throw AppException(ErrorCode.UPSTREAM_CHANGED)
+                    if (stored.first != pageKey) throw AppException(ErrorCode.UPSTREAM_CHANGED)
                     e.getPage(stored.second) }
             } catch (_: NothingFoundException) { return@extract CatalogPage(emptyList(), null) }
             // Retain opaque cursors within the bounded cache: cancellation can arrive
             // after extraction succeeds but before the caller accepts the result.
-            val items = page.items.filterIsInstance<StreamInfoItem>().take(50).mapNotNull { item ->
-                runCatching {
-                    val id = service.streamLHFactory.getId(item.url)
-                    VideoSummary(VideoId(id), item.name.take(500), item.uploaderName.orEmpty().take(200),
-                        item.thumbnails.firstOrNull()?.url?.takeIf { runCatching { NetworkPolicy.validate(it, NetworkRole.THUMBNAIL) }.isSuccess },
-                        item.duration.takeIf { it >= 0 }, item.streamType == StreamType.LIVE_STREAM)
-                }.getOrNull()
-            }.distinctBy { it.id }
+            val items = page.items.filterIsInstance<StreamInfoItem>().take(50).mapNotNull(::summary).distinctBy { it.id }
             val nextPage = page.nextPage
             val token = if (nextPage != null && Page.isValid(nextPage)) UUID.randomUUID().toString().also {
-                pages[it] = clean to nextPage
+                pages[it] = pageKey to nextPage
                 while (pages.size > 16) pages.remove(pages.keys.first())
             } else null
-            CatalogPage(items, token,
+            CatalogPage(sort.order(items), token,
                 if (cursor == null) runCatching { e.searchSuggestion?.take(200) }.getOrNull() else null,
                 cursor == null && runCatching { e.isCorrectedSearch }.getOrDefault(false))
         }
@@ -124,8 +128,11 @@ class NewPipeCatalog : VideoCatalog, StreamResolver {
         val captions = runCatching { e.subtitlesDefault }.getOrDefault(emptyList()).take(30).mapNotNull { c ->
             runCatching { NetworkPolicy.validate(c.content, NetworkRole.METADATA); CaptionTrack(c.languageTag.take(64), c.format?.mimeType.orEmpty().take(100), MediaEndpoint(c.content)) }.getOrNull()
         }
+        // getRelatedItems parses the already-fetched watch-next response; no new request.
+        val related = runCatching { e.relatedItems?.items.orEmpty().filterIsInstance<StreamInfoItem>()
+            .take(32).mapNotNull(::summary).filterNot { it.id == id || it.live }.distinctBy { it.id } }.getOrDefault(emptyList())
         PlaybackPlan(id, e.name.take(500), e.length.coerceAtLeast(0) * 1000, System.currentTimeMillis(), videos, audio, hls, dash, captions,
-            genre = runCatching { GenreClassifier.providerCategory(e.category) }.getOrNull())
+            genre = runCatching { GenreClassifier.providerCategory(e.category) }.getOrNull(), related = related)
     }
 
     companion object { private val mutex = Mutex() }

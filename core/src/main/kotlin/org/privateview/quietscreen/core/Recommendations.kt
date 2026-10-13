@@ -20,10 +20,11 @@ class GenrePreferences(values: Map<Genre, Double> = emptyMap()) {
     val personalized get() = scores.values.any { it > 0.0 }
     fun order(): List<Genre> = Genre.entries.sortedByDescending { scores.getValue(it) }
     /** Limit discovery requests while retaining both familiar interests and exploration. */
-    fun recommendationSources(enabled: Boolean): List<Genre> {
-        if (!enabled || !personalized) return Genre.entries.take(4)
+    fun recommendationSources(enabled: Boolean, rotation: Int = 0): List<Genre> {
+        val rotated = Genre.entries.indices.map { Genre.entries[Math.floorMod(it + rotation, Genre.entries.size)] }
+        if (!enabled || !personalized) return rotated.take(4)
         val preferred = order().filter { scores.getValue(it) > 0.0 }.take(2)
-        return (preferred + Genre.entries.filterNot { it in preferred }).take(4)
+        return (preferred + rotated.filterNot { it in preferred }).take(4)
     }
     fun watched(genre: Genre, watchedMs: Long, durationMs: Long): GenrePreferences {
         val watched = watchedMs.coerceIn(0, 3_600_000)
@@ -71,23 +72,34 @@ object GenreClassifier {
     }
 }
 
-data class RecommendedVideo(val video: VideoSummary, val genre: Genre)
+data class RecommendedVideo(val video: VideoSummary, val genre: Genre?)
 
 /** Bounded deterministic mixing; eight genre totals suffice, with no per-video learning history. */
 object RecommendedVideos {
     fun select(profile: GenrePreferences, enabled: Boolean, candidates: Map<Genre, List<VideoSummary>>,
-               excluded: Set<String>, limit: Int = 24): List<RecommendedVideo> {
+               excluded: Set<String>, limit: Int = 24, interests: InterestProfile = InterestProfile(),
+               extras: List<VideoSummary> = emptyList(), context: VideoSummary? = null, rotation: Int = 0): List<RecommendedVideo> {
         val maximum = limit.coerceIn(0, 24)
         if (maximum == 0) return emptyList()
         val used = mutableSetOf<String>()
         val queues = Genre.entries.associateWith { genre ->
-            candidates[genre].orEmpty().take(60).filterNot { it.live || it.id.value in excluded }
+            InterestRanking.rank(candidates[genre].orEmpty(), interests, enabled, context, rotation)
+                .filterNot { it.id.value in excluded }
         }
         val indices = Genre.entries.associateWith { 0 }.toMutableMap()
         val learned = if (enabled) profile.order().filter { profile.scores.getValue(it) > 0 }.take(2) else emptyList()
         val debt = Genre.entries.associateWith { 0.0 }.toMutableMap()
         var exploreIndex = 0
         val result = mutableListOf<RecommendedVideo>()
+        val specific = InterestRanking.rank(extras, interests, enabled, context, rotation).filterNot { it.id.value in excluded }
+        var specificIndex = 0
+        val channelCounts = mutableMapOf<String, Int>()
+        fun accept(video: VideoSummary, genre: Genre?) {
+            used += video.id.value
+            val channel = InterestMetadata.channel(video)
+            channelCounts[channel] = (channelCounts[channel] ?: 0) + 1
+            result += RecommendedVideo(video, genre)
+        }
         fun available(genre: Genre): Boolean {
             val videos = queues.getValue(genre)
             while (indices.getValue(genre) < videos.size &&
@@ -96,8 +108,20 @@ object RecommendedVideos {
             return indices.getValue(genre) < videos.size
         }
         while (result.size < maximum) {
+            while (specificIndex < specific.size && specific[specificIndex].id.value in used) specificIndex++
+            if (specificIndex < specific.size && (context != null || result.size % 2 == 0)) {
+                val remaining = specific.drop(specificIndex)
+                val index = remaining.indexOfFirst { it.id.value !in used && (channelCounts[InterestMetadata.channel(it)] ?: 0) < 3 }
+                val chosen = if (index >= 0) specificIndex + index else specificIndex
+                val video = specific[chosen]
+                accept(video, GenreClassifier.classify(video))
+                continue
+            }
             val availableGenres = Genre.entries.filter { available(it) }
-            if (availableGenres.isEmpty()) break
+            if (availableGenres.isEmpty()) {
+                if (specificIndex < specific.size) { accept(specific[specificIndex++], GenreClassifier.classify(specific[specificIndex - 1])); continue }
+                break
+            }
             val exploration = availableGenres.filterNot { it in learned }
             val preferred = availableGenres.filter { it in learned }
             val genre = if (learned.isNotEmpty() && result.size % 4 == 3 && exploration.isNotEmpty()) {
@@ -110,10 +134,17 @@ object RecommendedVideos {
                 debt[chosen] = debt.getValue(chosen) - weights.values.sum()
                 chosen
             }
-            val video = queues.getValue(genre)[indices.getValue(genre)]
+            val videos = queues.getValue(genre)
+            val start = indices.getValue(genre)
+            val diverse = (start until videos.size).firstOrNull { videos[it].id.value !in used &&
+                (channelCounts[InterestMetadata.channel(videos[it])] ?: 0) < 3 }
+            val video = videos[diverse ?: start]
+            // Keep skipped creators eligible as a fallback when the pool is sparse.
+            if (diverse != null && diverse != start) {
+                accept(video, genre); continue
+            }
             indices[genre] = indices.getValue(genre) + 1
-            used += video.id.value
-            result += RecommendedVideo(video, genre)
+            accept(video, genre)
         }
         return result
     }

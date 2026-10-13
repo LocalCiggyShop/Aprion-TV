@@ -5,10 +5,16 @@ value class VideoId(val value: String) {
     init { require(Regex("[A-Za-z0-9_-]{11}").matches(value)) { "Invalid public video ID" } }
 }
 
-data class VideoSummary(val id: VideoId, val title: String, val channel: String, val thumbnail: String?, val durationSeconds: Long?, val live: Boolean = false)
+data class VideoSummary(val id: VideoId, val title: String, val channel: String, val thumbnail: String?, val durationSeconds: Long?, val live: Boolean = false, val channelId: String? = null, val uploadedAtMs: Long? = null)
 data class CatalogPage(val videos: List<VideoSummary>, val cursor: String?, val suggestion: String? = null, val corrected: Boolean = false)
+enum class SearchSort(val label: String) {
+    NEWEST("Newest first"), RELEVANCE("Relevance");
+    fun order(videos: List<VideoSummary>) = if (this == NEWEST)
+        videos.sortedByDescending { it.uploadedAtMs?.takeIf { date -> date > 0 } ?: 0L } else videos
+}
 interface VideoCatalog {
     suspend fun search(query: String, cursor: String? = null): CatalogPage
+    suspend fun search(query: String, cursor: String?, sort: SearchSort): CatalogPage = search(query, cursor)
     fun cancelPending()
 }
 interface StreamResolver { suspend fun resolve(id: VideoId): PlaybackPlan; fun cancelPending() }
@@ -19,7 +25,7 @@ class MediaEndpoint(val url: String) { override fun toString() = "MediaEndpoint(
 data class VideoVariant(val key: String, val endpoint: MediaEndpoint, val mimeType: String, val codec: String?, val height: Int, val fps: Int, val bitrate: Int, val videoOnly: Boolean, val delivery: Delivery)
 data class AudioVariant(val key: String, val endpoint: MediaEndpoint, val mimeType: String, val codec: String?, val bitrate: Int, val original: Boolean, val language: String?, val delivery: Delivery)
 data class CaptionTrack(val language: String, val format: String, val endpoint: MediaEndpoint)
-data class PlaybackPlan(val id: VideoId, val title: String, val durationMs: Long, val fetchedAtMs: Long, val videos: List<VideoVariant>, val audio: List<AudioVariant>, val hls: MediaEndpoint?, val dash: MediaEndpoint?, val captions: List<CaptionTrack>, val live: Boolean = false, val genre: Genre? = null)
+data class PlaybackPlan(val id: VideoId, val title: String, val durationMs: Long, val fetchedAtMs: Long, val videos: List<VideoVariant>, val audio: List<AudioVariant>, val hls: MediaEndpoint?, val dash: MediaEndpoint?, val captions: List<CaptionTrack>, val live: Boolean = false, val genre: Genre? = null, val related: List<VideoSummary> = emptyList())
 
 enum class ErrorCode { INVALID_QUERY, OFFLINE, TIMEOUT, RATE_LIMITED, UPSTREAM_CHANGED, SIGN_IN_REQUIRED, RESTRICTED, UNAVAILABLE, DRM, UNSUPPORTED_FORMAT, DECODER, SECURITY_POLICY }
 class AppException(val code: ErrorCode, cause: Throwable? = null) : Exception(code.name, cause)

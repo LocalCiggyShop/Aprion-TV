@@ -39,14 +39,19 @@ class BrowseContractTest {
         automation.serviceInfo = info
         if (android.os.Build.VERSION.SDK_INT >= 33) automation.clearCache()
         val result = mutableListOf<AccessibilityNodeInfo>()
-        fun visit(node: AccessibilityNodeInfo) { if (result.size >= 2000) return; result += node; for (i in 0 until node.childCount) node.getChild(i)?.let(::visit) }
+        fun visit(node: AccessibilityNodeInfo) { if (result.size >= 2000 || !node.refresh()) return; result += node; for (i in 0 until node.childCount) node.getChild(i)?.let(::visit) }
         automation.windows.mapNotNull { it.root }.filter { it.packageName?.toString() == instrument.targetContext.packageName }.forEach(::visit)
         return result
     }
     private fun label(node: AccessibilityNodeInfo): String = listOfNotNull(node.text, node.contentDescription).joinToString(" ") +
         (0 until node.childCount).mapNotNull { node.getChild(it) }.joinToString(" ") { label(it) }
     private fun focused() = nodes().filter { it.isFocused }.joinToString(" ") { label(it) }
-    private fun key(code: Int) { instrument.sendKeyDownUpSync(code); Thread.sleep(200) }
+    private fun key(code: Int) {
+        val now = SystemClock.uptimeMillis()
+        assertTrue(instrument.uiAutomation.injectInputEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0), true))
+        assertTrue(instrument.uiAutomation.injectInputEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0), true))
+        Thread.sleep(200)
+    }
 
     @Test fun recommendedUsesPrivateSearchLearningImmediatelyReusesBoundedCatalogAndResets() {
         var requests = 0
@@ -77,6 +82,7 @@ class BrowseContractTest {
             val profile = GenrePreferences().watched(requireNotNull(GenreClassifier.classify(
                 video(900).copy(title = "Minecraft gameplay"))), 120_000, 120_000)
             onMain { model.arrange(profile, true); model.loadRow("recommended") }
+            await { model.rows.value.first().learned }
             val row = model.rows.value.first()
             assertTrue(row.learned)
             assertEquals(18, row.videos.count { row.origins[it.id.value] == Genre.GAMING })
@@ -86,8 +92,10 @@ class BrowseContractTest {
                 model.focus = BrowseFocus(null, pinned.id.value, column = 2, rowKey = "recommended")
                 model.arrange(GenrePreferences(mapOf(Genre.MUSIC to 100.0)), true)
             }
+            await { model.rows.value.first().videos.getOrNull(2)?.id == pinned.id }
             assertEquals(pinned.id, model.rows.value.first().videos[2].id)
             onMain { model.focus = null; model.arrange(profile, false) }
+            await { !model.rows.value.first().learned }
             assertFalse(model.rows.value.first().learned)
             assertEquals(Genre.entries.toSet(), model.rows.value.first().origins.values.toSet())
             val store = ContinueWatching(instrument.targetContext)
@@ -109,6 +117,100 @@ class BrowseContractTest {
         } finally { onMain { model.cancel() } }
     }
 
+    @Test fun detailedLearningPersistenceFourRequestBudgetContextFeedbackAndPauseReset() {
+        val genrePrefs = instrument.targetContext.getSharedPreferences("genre_preferences", 0)
+        val detailPrefs = instrument.targetContext.getSharedPreferences("recommendation_interests", 0)
+        val oldGenres = genrePrefs.all; val oldDetail = detailPrefs.getString("profile", null)
+        val requests = mutableListOf<String>(); var active = 0; var maximum = 0
+        val fake = object : VideoCatalog {
+            override suspend fun search(query: String, cursor: String?): CatalogPage {
+                requests += query; active++; maximum = maxOf(maximum, active)
+                try { delay(20); return CatalogPage((0..39).map { video(it).copy(title = "Bass fishing technique $it", channel = "Creator $it") }, null) }
+                finally { active-- }
+            }
+            override fun cancelPending() {}
+        }
+        lateinit var model: BrowseViewModel
+        var modelReady = false
+        try {
+            val store = Personalization(instrument.targetContext); store.reset(); store.enabled = true
+            store.record(video(900).copy(title = "Bass fishing river techniques"), null, 60_000, 120_000)
+            val reopened = Personalization(instrument.targetContext)
+            assertTrue(reopened.interests().topics.getValue("fishing") > 0)
+            assertFalse(reopened.profile().personalized)
+            assertFalse(detailPrefs.getString("profile", "")!!.contains("https:"))
+            onMain { model = BrowseViewModel(fake); modelReady = true; model.arrange(reopened.profile(), true, interests = reopened.interests()); model.loadRow("recommended") }
+            await { model.rows.value.first().loaded && !model.rows.value.first().busy && model.rows.value.first().videos.size == 24 }
+            assertEquals(4, requests.size); assertEquals(1, maximum)
+            assertTrue(requests.contains(reopened.interests().discoveryQuery()))
+            val current = video(901).copy(title = "Blues guitar lesson", channel = "Guitar teacher")
+            val related = video(902).copy(title = "Blues guitar chords", channel = "Guitar teacher")
+            onMain { model.context(current, listOf(current, related, related)) }
+            await { model.playerRow.value.videos.firstOrNull()?.id == related.id }
+            assertEquals(4, requests.size)
+            assertTrue(model.playerRow.value.videos.none { it.id == current.id })
+            store.feedback(related, RecommendationFeedback.BLOCK_CHANNEL)
+            onMain { model.arrange(store.profile(), true, interests = store.interests()) }
+            await { model.playerRow.value.videos.none { it.id == related.id } }
+            assertFalse(Personalization(instrument.targetContext).interests().permits(related))
+            val known = video(903).copy(channel = "Alias fixture", channelId = "UC" + "a".repeat(22))
+            store.record(known, null, 60_000, 120_000)
+            store.feedback(known, RecommendationFeedback.BLOCK_CHANNEL)
+            val aliases = Personalization(instrument.targetContext).interests()
+            assertTrue(aliases.channelAffinity(known.copy(channelId = null)) > 0)
+            assertFalse(aliases.permits(known.copy(id = video(904).id, channelId = null)))
+            val before = store.interests().topics
+            store.enabled = false; store.record(related, Genre.MUSIC, 90_000, 120_000)
+            assertEquals(before, store.interests().topics)
+            store.reset(); assertFalse(store.interests().personalized); assertTrue(store.interests().blocked.isEmpty())
+            detailPrefs.edit().putString("profile", "x".repeat(32_769)).commit()
+            assertFalse(Personalization(instrument.targetContext).interests().personalized)
+            onMain { model.clear() }; Thread.sleep(100)
+            assertTrue(model.rows.value.all { it.videos.isEmpty() }); assertTrue(model.playerRow.value.videos.isEmpty())
+        } finally {
+            onMain { if (modelReady) model.cancel() }
+            detailPrefs.edit().clear().apply { if (oldDetail != null) putString("profile", oldDetail) }.commit()
+            genrePrefs.edit().clear().apply { oldGenres.forEach { (key, value) ->
+                when (value) { is Float -> putFloat(key, value); is Boolean -> putBoolean(key, value) }
+            } }.commit()
+        }
+    }
+
+    @Test fun homeFeedbackRemovesRecommendationAndRestoresRemoteWithoutPlayback() {
+        val updatePrefs = instrument.targetContext.getSharedPreferences("updates", 0)
+        val automatic = updatePrefs.getBoolean("automatic", true)
+        updatePrefs.edit().putBoolean("automatic", false).commit()
+        val host = instrument.startActivitySync(Intent(instrument.targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
+        lateinit var model: BrowseViewModel
+        var details = InterestProfile(); var opened = 0
+        val fake = object : VideoCatalog {
+            override suspend fun search(query: String, cursor: String?) = CatalogPage((0..39).map {
+                video(it).copy(title = "Bass fishing technique $it", channel = "Creator $it") }, null)
+            override fun cancelPending() {}
+        }
+        try {
+            onMain { model = BrowseViewModel(fake); host.setContent { MaterialTheme {
+                BrowseScreen(model, "home", {}, {}, {}, {}, feedback = { video, action ->
+                    details = details.feedback(video, action); model.arrange(GenrePreferences(), true, interests = details)
+                }, play = { _, _ -> opened++ })
+            } } }
+            await { focused().contains("Home") && model.rows.value.first().videos.isNotEmpty() }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT); await { model.focus?.videoId != null }
+            val chosen = requireNotNull(model.focus?.videoId)
+            key(KeyEvent.KEYCODE_MENU); await { focused().trim() == "More like this" }
+            key(KeyEvent.KEYCODE_DPAD_DOWN); await { focused().trim() == "Not interested" }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await { model.rows.value.first().videos.none { it.id.value == chosen } && focused().contains("Bass fishing") }
+            assertEquals(0, opened); assertTrue(chosen in details.dismissed)
+            key(KeyEvent.KEYCODE_DPAD_RIGHT); await { model.focus?.videoId != chosen && focused().contains("Bass fishing") }
+            key(KeyEvent.KEYCODE_MENU); await { focused().trim() == "More like this" }
+            key(KeyEvent.KEYCODE_BACK); await { focused().contains("Bass fishing") }
+        } finally {
+            onMain { model.cancel(); host.finish() }; updatePrefs.edit().putBoolean("automatic", automatic).commit()
+        }
+    }
+
     @Test fun continueWatchingPrivatePersistenceSecondRowAndCompletionRemoval() {
         val prefs = instrument.targetContext.getSharedPreferences("continue_watching", 0)
         val original = prefs.getString("records", null)
@@ -128,6 +230,7 @@ class BrowseContractTest {
             activity = instrument.startActivitySync(Intent(instrument.targetContext, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
             val host = requireNotNull(activity)
+            await { focused().contains("Home") }
             onMain {
                 model = BrowseViewModel(object : VideoCatalog {
                     override suspend fun search(query: String, cursor: String?) = CatalogPage(listOf(video(0)), null)
@@ -139,7 +242,7 @@ class BrowseContractTest {
             assertEquals("Continue watching", model.rows.value[1].label)
             await { focused().contains("Home") && model.rows.value.first().loaded }
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
-            await { focused().contains("Fixture video 0") }
+            await { model.focus?.rowKey == "recommended" && model.rows.value.first().videos.any { it.id.value == model.focus?.videoId && focused().contains(it.title) } }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await { focused().contains("Fixture video 1") && focused().contains("Resume 0:35") }
             onMain { model.arrange(GenrePreferences(mapOf(Genre.MUSIC to 20.0)), true) }
@@ -250,7 +353,8 @@ class BrowseContractTest {
             }
             await { model.rows.value.first { it.genre == Genre.SCIENCE }.videos.size == 6 && focused().contains("Home") }
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
-            await { focused().contains("Fixture video 0") }
+            await { model.focus?.rowKey == "recommended" && model.rows.value.first().videos.any {
+                it.id.value == model.focus?.videoId && focused().contains(it.title) } }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await { model.focus?.genre == Genre.SCIENCE }
             for (index in 1..5) {

@@ -1,5 +1,1 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="96dp" android:height="96dp" android:viewportWidth="96" android:viewportHeight="96">
-    <path android:fillColor="#102329" android:pathData="M0,0h96v96h-96z" />
-    <path android:fillColor="#6CE3C4" android:pathData="M24,25h48v46h-48z" />
-    <path android:fillColor="#102329" android:pathData="M39,35l21,13l-21,13z" />
-</vector>
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android" android:src="@drawable/app_logo" android:filter="true" />

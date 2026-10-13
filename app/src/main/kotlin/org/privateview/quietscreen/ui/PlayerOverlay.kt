@@ -53,7 +53,8 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
     loadRecommendations: (Boolean) -> Unit, cancelRecommendations: () -> Unit,
     togglePlayback: () -> Unit, setPlaying: (Boolean) -> Unit, seek: (Long) -> Unit,
     playNext: (VideoSummary, Genre?) -> Unit, back: () -> Unit, retry: () -> Unit,
-    qualityChoices: () -> List<Pair<String, () -> Unit>>, audioChoices: () -> List<Pair<String, () -> Unit>>) {
+    qualityChoices: () -> List<Pair<String, () -> Unit>>, audioChoices: () -> List<Pair<String, () -> Unit>>,
+    feedback: (VideoSummary, RecommendationFeedback) -> Unit = { _, _ -> }) {
     var visible by remember(info.video.id) { mutableStateOf(true) }
     var area by remember(info.video.id) { mutableStateOf(PlayerArea.TRANSPORT) }
     var menu by remember(info.video.id) { mutableStateOf<String?>(null) }
@@ -76,6 +77,7 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
     var pinnedOrigins by remember(info.video.id) { mutableStateOf<Map<String, Genre>>(emptyMap()) }
     var shelfIndex by remember { mutableIntStateOf(0) }
     var waitingForCard by remember { mutableStateOf(false) }
+    var feedbackVideo by remember(info.video.id) { mutableStateOf<VideoSummary?>(null) }
     val cards = if (area == PlayerArea.RECOMMENDATIONS && pinnedCards.isNotEmpty()) pinnedCards else rawCards
     val currentArea by rememberUpdatedState(area)
     fun freezeShelf() { pinnedCards = rawCards; pinnedOrigins = row.origins.filterKeys { key -> rawCards.any { it.id.value == key } } }
@@ -117,7 +119,7 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
     }
     DisposableEffect(Unit) { onDispose { navigation?.cancel(); cancelRecommendations() } }
     LaunchedEffect(visible, area, menu, interaction, info.playing, info.error) {
-        if (visible && menu == null && playerAutoHide(info.playing, area, info.error != null)) {
+        if (visible && menu == null && feedbackVideo == null && playerAutoHide(info.playing, area, info.error != null)) {
             delay(8000); hideControls()
         }
     }
@@ -138,15 +140,21 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
             freezeShelf(); waitingForCard = false; focusShelf(shelfIndex)
         }
     }
-    BackHandler {
+    fun handleBack() {
         interaction++
         when {
             overlayVisible || menu != null -> hideControls()
             else -> back()
         }
     }
+    BackHandler(onBack = ::handleBack)
     Box(Modifier.fillMaxSize().focusRequester(videoFocus).onPreviewKeyEvent { event ->
-        if (event.type != KeyEventType.KeyDown) false else {
+        // Legacy TV key dispatch can consume Back before the Activity dispatcher.
+        // Own both halves of one remote press; repeats/up must not navigate twice.
+        if (event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BACK) {
+            if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) handleBack()
+            true
+        } else if (event.type != KeyEventType.KeyDown) false else {
             interaction++
             when (event.nativeKeyEvent.keyCode) {
                 android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { togglePlayback(); visible = true; true }
@@ -230,15 +238,16 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
             if (info.error != null) TvAction("Try playback again", Modifier.focusRequester(retryFocus)
                 .onFocusChanged { if (it.isFocused) area = PlayerArea.RECOVERY }) { retry(); showTransport() }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Recommended", color = Cloud, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                Text(if (area == PlayerArea.RECOMMENDATIONS) "↑ Playback · OK Watch" else "↓ Explore videos", color = Muted, fontSize = 11.sp)
+                Text("Recommended" + if (row.contextual) " · ${row.hint}" else "", color = Cloud, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text(if (area == PlayerArea.RECOMMENDATIONS) "↑ Playback · OK Watch · Hold OK / Menu Tune" else "↓ Explore videos", color = Muted, fontSize = 11.sp)
             }
             LazyRow(state = shelf, modifier = Modifier.fillMaxWidth().height(if (area == PlayerArea.RECOMMENDATIONS) 162.dp else 68.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(4.dp)) {
                 itemsIndexed(cards, key = { _, video -> video.id.value }) { index, video ->
                     val focus = remember(video.id) { FocusRequester() }
                     DisposableEffect(video.id) { cardsFocus[video.id.value] = focus; onDispose { cardsFocus.remove(video.id.value) } }
-                    CompactVideoCard(video, Modifier.focusRequester(focus).onFocusChanged { if (it.isFocused) { area = PlayerArea.RECOMMENDATIONS; shelfIndex = index } }
+                    CompactVideoCard(video, Modifier.focusRequester(focus).recommendationMenu { feedbackVideo = video }
+                        .onFocusChanged { if (it.isFocused) { area = PlayerArea.RECOMMENDATIONS; shelfIndex = index } }
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) false else when (event.key) {
                                 Key.DirectionLeft -> { if (index > 0) focusShelf(index - 1); true }
@@ -287,6 +296,14 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
                     choice(); interaction++
                     if (currentMenu == "quality" || currentMenu == "audio") { menu = null; area = PlayerArea.OPTIONS }
                 })
+        }
+    }
+    feedbackVideo?.let { video ->
+        RecommendationFeedbackDialog(video, close = { feedbackVideo = null; focusShelf(shelfIndex) }) { action ->
+            feedback(video, action)
+            pinnedCards = emptyList(); pinnedOrigins = emptyMap(); waitingForCard = true
+            feedbackVideo = null
+            scope.launch { repeat(3) { withFrameNanos { } }; focusShelf(shelfIndex) }
         }
     }
 }

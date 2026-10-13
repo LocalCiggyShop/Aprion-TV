@@ -30,7 +30,8 @@ import org.privateview.quietscreen.presentation.*
 
 @Composable
 fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Unit, settings: () -> Unit,
-    about: () -> Unit, exit: () -> Unit, play: (VideoSummary, Genre?) -> Unit) {
+    about: () -> Unit, exit: () -> Unit, feedback: (VideoSummary, RecommendationFeedback) -> Unit = { _, _ -> },
+    play: (VideoSummary, Genre?) -> Unit) {
     val rows by model.rows.collectAsStateWithLifecycle()
     val column = rememberLazyListState(model.vertical.index, model.vertical.offset)
     val rail = remember { FocusRequester() }
@@ -41,6 +42,7 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
     val rowFocus = remember { mutableMapOf<String, suspend (BrowseFocus) -> Boolean>() }
     val restored = remember { model.focus.takeIf { initialFocus == "home" } }
     val navigation = remember { NavigationQueue() }
+    var feedbackVideo by remember { mutableStateOf<VideoSummary?>(null) }
     fun cancelNavigation() { navigation.pending = null; navigation.job?.cancel() }
     fun navigate(target: BrowseFocus) {
         navigation.pending = target
@@ -66,7 +68,16 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
         }
     }
     LaunchedEffect(Unit) {
-        if (restored != null) navigate(restored) else initialRail.requestFocus()
+        repeat(2) { withFrameNanos { } }
+        if (restored != null) navigate(restored) else {
+            var acquired = false
+            repeat(4) {
+                if (!acquired) {
+                    acquired = initialRail.requestFocus(FocusDirection.Enter)
+                    if (!acquired) withFrameNanos { }
+                }
+            }
+        }
     }
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -76,6 +87,7 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
     DisposableEffect(Unit) {
         onDispose {
             model.vertical = ScrollPosition(column.firstVisibleItemIndex, column.firstVisibleItemScrollOffset)
+            model.exposed()
             model.cancel()
         }
     }
@@ -130,11 +142,20 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
                         } else if (direction < 0) {
                             if (rows.any { it.busy }) cancelFocus.requestFocus() else rail.requestFocus()
                         }
-                    }, play = play)
+                    }, feedback = { video -> cancelNavigation(); feedbackVideo = video }, play = play)
                 }
             }
-            Text("← → Browse a row    ↑ ↓ Change row    OK Play    Back Return", color = Muted, fontSize = 11.sp,
+            Text("← → Browse    ↑ ↓ Change row    OK Play    Hold OK / Menu Tune    Back Return", color = Muted, fontSize = 11.sp,
                 modifier = Modifier.padding(start = 26.dp, bottom = 14.dp))
+        }
+    }
+    feedbackVideo?.let { video ->
+        fun dismiss() { feedbackVideo = null; model.focus?.let(::navigate) }
+        RecommendationFeedbackDialog(video, close = ::dismiss) { action ->
+            val target = model.focus?.let { if (action == RecommendationFeedback.MORE) it else it.copy(videoId = null) }
+            if (target != null) model.focus = target
+            feedback(video, action); feedbackVideo = null
+            scope.launch { model.awaitRanking(); repeat(3) { withFrameNanos { } }; target?.let(::navigate) }
         }
     }
 }
@@ -142,7 +163,8 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
 @Composable
 private fun BrowseShelf(row: BrowseRow, model: BrowseViewModel,
     focusers: MutableMap<String, suspend (BrowseFocus) -> Boolean>, rail: FocusRequester,
-    navigate: (BrowseFocus) -> Unit, onVertical: (Int, Int) -> Unit, play: (VideoSummary, Genre?) -> Unit) {
+    navigate: (BrowseFocus) -> Unit, onVertical: (Int, Int) -> Unit, feedback: (VideoSummary) -> Unit,
+    play: (VideoSummary, Genre?) -> Unit) {
     val saved = model.horizontal[row.key] ?: ScrollPosition()
     val list = rememberLazyListState(saved.index, saved.offset)
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
@@ -209,7 +231,7 @@ private fun BrowseShelf(row: BrowseRow, model: BrowseViewModel,
             itemsIndexed(row.videos, key = { _, video -> video.id.value }) { index, video ->
                 val focus = remember(video.id) { FocusRequester() }
                 DisposableEffect(video.id) { requesters[video.id.value] = focus; onDispose { requesters.remove(video.id.value) } }
-                VideoCard(video, Modifier.focusRequester(focus).onFocusChanged {
+                VideoCard(video, Modifier.focusRequester(focus).recommendationMenu { feedback(video) }.onFocusChanged {
                     if (it.isFocused) { model.contentFocused = true; pendingCard = false; desiredColumn = index; model.focus = BrowseFocus(row.genre, video.id.value, column = index, rowKey = row.key) }
                 }.onPreviewKeyEvent {
                     if (it.type != KeyEventType.KeyDown) false else when (it.key) {

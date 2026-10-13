@@ -17,6 +17,7 @@ import org.privateview.quietscreen.presentation.SearchViewModel
 import org.privateview.quietscreen.presentation.BrowseViewModel
 import org.privateview.quietscreen.core.Genre
 import org.privateview.quietscreen.core.GenreClassifier
+import org.privateview.quietscreen.core.RecommendationFeedback
 import org.privateview.quietscreen.ui.*
 import org.privateview.quietscreen.updates.UpdateManager
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -36,6 +37,11 @@ class MainActivity : ComponentActivity() {
     private var homeFocus by mutableStateOf("home")
     private var selectedGenre: Genre? = null
     private lateinit var updates: UpdateManager
+    private fun refreshRecommendations() = browseModel.arrange(personalization.profile(), personalization.enabled,
+        continuing.finished(), personalization.interests())
+    private fun recommendationFeedback(video: VideoSummary, feedback: RecommendationFeedback) {
+        personalization.feedback(video, feedback); refreshRecommendations()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,13 +55,17 @@ class MainActivity : ComponentActivity() {
         })[SearchViewModel::class.java]
         browseModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T = BrowseViewModel(NewPipeCatalog()) as T
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = BrowseViewModel(NewPipeCatalog(), personalization::exposed) as T
         })[BrowseViewModel::class.java]
-        browseModel.arrange(personalization.profile(), personalization.enabled, continuing.finished())
+        refreshRecommendations()
         browseModel.continueWatching(continuing.videos())
         setContent {
             MaterialTheme {
                 val updateStatus by updates.state.collectAsStateWithLifecycle()
+                var updatePrompt by remember { mutableStateOf(false) }
+                LaunchedEffect(updateStatus.ready, updateStatus.busy, screen) {
+                    updatePrompt = updateStatus.ready && !updateStatus.busy && (screen == Screen.HOME || screen == Screen.SETTINGS)
+                }
                 LaunchedEffect(screen) {
                     if (screen == Screen.HOME || screen == Screen.SETTINGS) updates.enterForeground()
                     else updates.leaveForeground()
@@ -67,7 +77,7 @@ class MainActivity : ComponentActivity() {
                         Screen.HOME -> BrowseScreen(browseModel,
                             initialFocus = homeFocus,
                             search = { homeFocus = "search"; screen = Screen.SEARCH }, settings = { homeFocus = "settings"; screen = Screen.SETTINGS },
-                            about = { homeFocus = "about"; screen = Screen.ABOUT }, exit = { finish() },
+                            about = { homeFocus = "about"; screen = Screen.ABOUT }, exit = { finish() }, feedback = ::recommendationFeedback,
                             play = { video, genre ->
                                 homeFocus = "home"; browseModel.cancel()
                                 selectedGenre = genre ?: continuing.genre(video.id) ?: GenreClassifier.classify(video)
@@ -75,29 +85,28 @@ class MainActivity : ComponentActivity() {
                                 selected = video; screen = Screen.PLAYER
                             })
                         Screen.SEARCH -> SearchScreen(searchModel, home = {
-                            searchModel.cancel(); browseModel.arrange(personalization.profile(), personalization.enabled, continuing.finished())
+                            searchModel.cancel(); refreshRecommendations()
                             browseModel.continueWatching(continuing.videos()); screen = Screen.HOME
                         }) {
                             searchModel.cancel(); selectedGenre = GenreClassifier.classify(it); startPositionMs = 0
                             selected = it; screen = Screen.PLAYER
                         }
                         Screen.SETTINGS -> SettingsScreen(settings, updates, personalization,
-                            clearSession = { searchModel.clear(); continuing.clear(); browseModel.clear(); ThumbnailLoader.clear() }) {
-                            browseModel.arrange(personalization.profile(), personalization.enabled, continuing.finished()); screen = Screen.HOME
-                        }
+                            clearSession = { searchModel.clear(); continuing.clear(); browseModel.clear(); ThumbnailLoader.clear() },
+                            home = { refreshRecommendations(); screen = Screen.HOME }, reviewUpdate = { updatePrompt = true })
                         Screen.ABOUT -> AboutScreen { screen = Screen.HOME }
                         Screen.PLAYER -> selected?.let { video ->
                             val genre = selectedGenre
                             key(video.id.value) {
                             PlayerScreen(video, catalog, settings,
                                 watched = { time, duration, detected ->
-                                    personalization.record(detected ?: genre, time, duration)
-                                    browseModel.arrange(personalization.profile(), personalization.enabled, continuing.finished())
+                                    personalization.record(video, detected ?: genre, time, duration)
+                                    refreshRecommendations()
                                 }, startPositionMs = startPositionMs,
                                 progress = { position, duration, ended, detected ->
                                     continuing.record(video, position, duration, ended, detected ?: genre)
                                     browseModel.continueWatching(continuing.videos())
-                                }, recommendations = browseModel,
+                                }, recommendations = browseModel, feedback = ::recommendationFeedback,
                                 playNext = { next, nextGenre ->
                                     browseModel.cancel(); selectedGenre = nextGenre ?: GenreClassifier.classify(next)
                                     startPositionMs = 0; selected = next
@@ -107,6 +116,9 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
+                    if (updatePrompt && updateStatus.ready && !updateStatus.busy &&
+                        (screen == Screen.HOME || screen == Screen.SETTINGS)) UpdateInstallDialog(updateStatus,
+                        close = { updatePrompt = false }, install = { updatePrompt = false; updates.install() })
                 }
             }
         }

@@ -19,12 +19,14 @@ import java.util.List;
  * loaded from the optimized app, and no production test API is added. */
 public final class TrialNativeInstrumentation extends Instrumentation {
     private Activity activity;
+    private UiAutomation automation;
     private int passed;
     private String query;
     private String check;
     private String historyStage;
     private String managerField;
     private String installMethod;
+    private String resultMethod;
     @Override public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
         query = arguments == null ? null : arguments.getString("query");
@@ -32,6 +34,7 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         historyStage = arguments == null ? null : arguments.getString("historyStage");
         managerField = arguments == null ? null : arguments.getString("managerField");
         installMethod = arguments == null ? null : arguments.getString("installMethod");
+        resultMethod = arguments == null ? null : arguments.getString("resultMethod");
         start();
     }
     @Override public void onStart() {
@@ -48,6 +51,12 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         java.util.Map<String, ?> originalGenres = genrePreferences.getAll();
         android.content.SharedPreferences continuing = getTargetContext().getSharedPreferences("continue_watching", android.content.Context.MODE_PRIVATE);
         String originalContinue = continuing.getString("records", null);
+        android.content.SharedPreferences interests = getTargetContext().getSharedPreferences("recommendation_interests", android.content.Context.MODE_PRIVATE);
+        String originalInterests = interests.getString("profile", null);
+        if ("recommendationsV2".equals(check)) {
+            interests.edit().clear().commit(); continuing.edit().clear().commit();
+            genrePreferences.edit().clear().putBoolean("enabled", true).commit();
+        }
         if ("browse".equals(check) || "continue".equals(check) || "searchHistory".equals(check) || "playerOverlay".equals(check)) continuing.edit().clear().commit();
         if ("playerOverlay".equals(check)) genrePreferences.edit().clear().putBoolean("enabled", true).putFloat("MUSIC", 30f).commit();
         if ("browse".equals(check) || "searchHistory".equals(check)) genrePreferences.edit().clear().putBoolean("enabled", true).commit();
@@ -73,6 +82,12 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             } else if ("searchHistory".equals(check)) {
                 searchHistory(); passed++;
                 result.putString("stream", "\nOK (1 search history check)\n");
+            } else if ("uiFollowups".equals(check)) {
+                uiFollowups(); passed++;
+                result.putString("stream", "\nOK (1 UI follow-up check)\n");
+            } else if ("recommendationsV2".equals(check)) {
+                recommendationsV2(); passed++;
+                result.putString("stream", "\nOK (1 recommendations v2 live check)\n");
             } else if ("playerOverlay".equals(check)) {
                 playerOverlay(); passed++;
                 result.putString("stream", "\nOK (1 player overlay live check)\n");
@@ -112,17 +127,22 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             android.content.SharedPreferences.Editor resumeRestore = continuing.edit().clear();
             if (originalContinue != null) resumeRestore.putString("records", originalContinue);
             resumeRestore.commit();
+            android.content.SharedPreferences.Editor interestRestore = interests.edit().clear();
+            if (originalInterests != null) interestRestore.putString("profile", originalInterests);
+            interestRestore.commit();
         }
         finish(resultCode, result);
     }
     private void require(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
     private void marker(String text) { Bundle status = new Bundle(); status.putString("stream", text + "\n"); sendStatus(0, status); }
     private UiAutomation ui() {
-        UiAutomation ui = getUiAutomation();
-        AccessibilityServiceInfo info = ui.getServiceInfo();
-        info.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
-        ui.setServiceInfo(info);
-        return ui;
+        if (automation == null) {
+            automation = getUiAutomation();
+            AccessibilityServiceInfo info = automation.getServiceInfo();
+            info.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS | AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
+            automation.setServiceInfo(info);
+        }
+        return automation;
     }
     private List<AccessibilityNodeInfo> nodes() {
         List<AccessibilityNodeInfo> nodes = new ArrayList<>();
@@ -131,10 +151,14 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             AccessibilityNodeInfo root = window.getRoot();
             if (root != null && getTargetContext().getPackageName().contentEquals(root.getPackageName())) visit(root, nodes);
         }
+        if (nodes.isEmpty()) {
+            AccessibilityNodeInfo active = ui().getRootInActiveWindow();
+            if (active != null && getTargetContext().getPackageName().contentEquals(active.getPackageName())) visit(active, nodes);
+        }
         return nodes;
     }
     private void visit(AccessibilityNodeInfo node, List<AccessibilityNodeInfo> nodes) {
-        if (nodes.size() >= 2000) return;
+        if (nodes.size() >= 2000 || !node.refresh()) return;
         nodes.add(node);
         for (int i = 0; i < node.getChildCount(); i++) { AccessibilityNodeInfo child = node.getChild(i); if (child != null) visit(child, nodes); }
     }
@@ -208,9 +232,14 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         key(KeyEvent.KEYCODE_BACK); waitFor("Search videos", 10, false);
         marker("TRIAL_REMOTE settingsSelection=true homeFocusRestored=true about=true back=true preferencesRestored=true");
     }
-    private void search(String query) {
+    private void search(String query) { search(query, true); }
+    private void search(String query, boolean relevance) {
         launch(); key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_CENTER);
         waitFor("Title, channel or video ID", 20, false);
+        if (relevance && texts().contains("Sort: Newest first")) {
+            clickSort(); waitFocused("Newest first"); key(KeyEvent.KEYCODE_DPAD_DOWN); waitFocused("Relevance"); key(KeyEvent.KEYCODE_DPAD_CENTER);
+            waitFor("Sort: Relevance", 10, false);
+        }
         AccessibilityNodeInfo edit = null;
         for (AccessibilityNodeInfo node : nodes()) if (node.isEditable()) { edit = node; break; }
         require(edit != null, "Search input unavailable");
@@ -240,6 +269,39 @@ public final class TrialNativeInstrumentation extends Instrumentation {
     private AccessibilityNodeInfo searchInput() {
         for (AccessibilityNodeInfo node : nodes()) if (node.isEditable()) return node;
         throw new AssertionError("Search input unavailable");
+    }
+    private void clickSort() {
+        runOnMainSync(() -> ((android.view.inputmethod.InputMethodManager) activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE))
+            .hideSoftInputFromWindow(activity.getWindow().getDecorView().getWindowToken(), 0));
+        SystemClock.sleep(350);
+        for (AccessibilityNodeInfo node : nodes()) if (node.isClickable() && label(node).trim().startsWith("Sort:")) {
+            require(node.performAction(AccessibilityNodeInfo.ACTION_FOCUS), "Sort focus unavailable");
+            SystemClock.sleep(150); require(focused().contains("Sort:"), "Sort target not focused"); key(KeyEvent.KEYCODE_DPAD_CENTER); return;
+        }
+        throw new AssertionError("Adjacent sort control unavailable");
+    }
+    private void uiFollowups() throws Exception {
+        search("BBC News", false); waitFor("Sort: Newest first", 10, false);
+        long until = SystemClock.elapsedRealtime()+60000;
+        while (SystemClock.elapsedRealtime()<until && !texts().matches("(?s).*\\b[1-9][0-9]* results\\b.*")) {
+            require(!texts().contains("unsupported response") && !texts().contains("could not be reached"), "Newest search failed"); SystemClock.sleep(300);
+        }
+        require(texts().matches("(?s).*\\b[1-9][0-9]* results\\b.*"), "Newest results missing");
+        capturePlayer("/data/local/tmp/aprion-v037-search.png");
+        clickSort(); waitFocused("Newest first"); key(KeyEvent.KEYCODE_DPAD_DOWN); waitFocused("Relevance"); key(KeyEvent.KEYCODE_DPAD_CENTER);
+        waitFor("Sort: Relevance", 10, false); require("BBC News".contentEquals(searchInput().getText()), "Sort discarded query");
+        key(KeyEvent.KEYCODE_BACK); waitFor("Search videos", 10, false);
+        // R8 inlines result() into this manifest-kept private receiver. Invoke
+        // its real pending-action branch without an installer intent/APK.
+        Class<?> receiverClass=Class.forName("org.privateview.quietscreen.updates.UpdateInstallReceiver",true,activity.getClassLoader());
+        android.content.BroadcastReceiver receiver=(android.content.BroadcastReceiver)receiverClass.getDeclaredConstructor().newInstance();
+        Intent pending = new Intent().putExtra(android.content.pm.PackageInstaller.EXTRA_STATUS,android.content.pm.PackageInstaller.STATUS_PENDING_USER_ACTION);
+        runOnMainSync(() -> receiver.onReceive(getTargetContext(),pending));
+        waitFor("Update ready to install",10,false); waitFocused("Install update");
+        capturePlayer("/data/local/tmp/aprion-v037-update-modal.png");
+        key(KeyEvent.KEYCODE_DPAD_DOWN); waitFocused("Later"); key(KeyEvent.KEYCODE_DPAD_CENTER);
+        SystemClock.sleep(300); require(!texts().contains("Update ready to install"), "Later did not dismiss modal");
+        marker("UI_FOLLOWUPS minifiedNewestSearch=true adjacentSortRemote=true queryRetained=true rootUpdateModal=true installFocused=true laterDismisses=true noInstallationAttempt=true");
     }
     private void browse() {
         launch();
@@ -482,7 +544,12 @@ public final class TrialNativeInstrumentation extends Instrumentation {
     }
     private void capturePlayer(String path) throws Exception {
         require(path.equals("/data/local/tmp/quietscreen-player-controls.png") || path.equals("/data/local/tmp/quietscreen-player-recommendations.png") ||
-            path.equals("/data/local/tmp/quietscreen-settings-explanations.png") || path.equals("/data/local/tmp/aprion-v035-installing.png"), "Unexpected screenshot destination");
+            path.equals("/data/local/tmp/quietscreen-settings-explanations.png") || path.equals("/data/local/tmp/aprion-v035-installing.png") ||
+            path.equals("/data/local/tmp/aprion-recommendations-v2-player.png") ||
+            path.equals("/data/local/tmp/aprion-recommendations-v2-feedback.png") ||
+            path.equals("/data/local/tmp/aprion-recommendations-v2-home.png") ||
+            path.equals("/data/local/tmp/aprion-v037-search.png") ||
+            path.equals("/data/local/tmp/aprion-v037-update-modal.png"), "Unexpected screenshot destination");
         try (android.os.ParcelFileDescriptor.AutoCloseInputStream command = new android.os.ParcelFileDescriptor.AutoCloseInputStream(ui().executeShellCommand("screencap -p " + path))) {
             byte[] buffer = new byte[1024]; int total = 0, read;
             while ((read = command.read(buffer)) >= 0) { total += read; require(total <= 8192, "Screenshot command output exceeded bound"); }
@@ -553,6 +620,57 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         require(focused().contains("Automatic updates"), "Update settings not reachable with remote");
         capturePlayer("/data/local/tmp/quietscreen-settings-explanations.png");
         marker("PLAYER_UX explicitNextVideoStarted=true bothResumeRecordsSaved=true secondBackReturnsHome=true updateSettingsReachable=true boundedPlaybackStopped=true");
+    }
+    private void recommendationsV2() throws Exception {
+        search("dQw4w9WgXcQ"); waitFor("Never Gonna Give You Up", 60, false);
+        openPinnedResult("Never Gonna Give You Up", true); waitFor("Playback Playing", 75, true);
+        observePlayback(35); key(KeyEvent.KEYCODE_MEDIA_PAUSE); waitFor("Playback Paused", 10, true);
+        if (focused().contains("Captions") || focused().contains("Settings")) key(KeyEvent.KEYCODE_DPAD_DOWN);
+        waitFocused("Play video"); long before = playbackSeconds();
+        key(KeyEvent.KEYCODE_DPAD_DOWN);
+        long deadline = SystemClock.elapsedRealtime() + 60_000;
+        while (SystemClock.elapsedRealtime() < deadline && (focused().contains("Play video") || focused().contains("Refresh") ||
+            focused().contains("Try again") || focused().contains("Cancel loading"))) SystemClock.sleep(300);
+        require(!focused().isEmpty() && !focused().contains("Play video") && !focused().contains("Refresh") &&
+            !focused().contains("Try again") && !focused().contains("Cancel loading"), "No contextual recommendation card");
+        require(texts().contains("Related to this video"), "Player did not use contextual recommendation row");
+        marker("RECOMMENDATIONS_V2_STAGE realMinifiedPlayback=true contextualPlayer=true pausedPositionKnown=true");
+        capturePlayer("/data/local/tmp/aprion-recommendations-v2-player.png");
+        key(KeyEvent.KEYCODE_MENU); waitFocused("More like this");
+        capturePlayer("/data/local/tmp/aprion-recommendations-v2-feedback.png");
+        key(KeyEvent.KEYCODE_DPAD_CENTER); SystemClock.sleep(700); waitPosition(before);
+        org.json.JSONObject learned = new org.json.JSONObject(getTargetContext().getSharedPreferences("recommendation_interests", 0).getString("profile", "{}"));
+        require(learned.getJSONObject("topics").length() > 0 && learned.getJSONObject("channels").length() > 0,
+            "Minified More like this did not persist local interests");
+        key(KeyEvent.KEYCODE_MENU); waitFocused("More like this"); key(KeyEvent.KEYCODE_DPAD_DOWN); waitFocused("Not interested");
+        key(KeyEvent.KEYCODE_DPAD_CENTER); SystemClock.sleep(700); waitPosition(before);
+        learned = new org.json.JSONObject(getTargetContext().getSharedPreferences("recommendation_interests", 0).getString("profile", "{}"));
+        require(learned.getJSONArray("dismissed").length() == 1, "Minified dismissal was not persisted");
+        double topicsBeforeExit = scoreTotal(learned.getJSONObject("topics"));
+        double channelsBeforeExit = scoreTotal(learned.getJSONObject("channels"));
+        key(KeyEvent.KEYCODE_BACK); waitPlayerHidden(); key(KeyEvent.KEYCODE_BACK); waitFor("Find your next watch", 15, false);
+        learned = new org.json.JSONObject(getTargetContext().getSharedPreferences("recommendation_interests", 0).getString("profile", "{}"));
+        require(getTargetContext().getSharedPreferences("genre_preferences", 0).getFloat("MUSIC", 0f) > 0f &&
+            scoreTotal(learned.getJSONObject("topics")) > topicsBeforeExit * .98 &&
+            scoreTotal(learned.getJSONObject("channels")) > channelsBeforeExit * .98,
+            "Real minified watch did not train genre, topic and channel preferences on exit");
+        key(KeyEvent.KEYCODE_DPAD_RIGHT);
+        deadline = SystemClock.elapsedRealtime() + 60_000;
+        while (SystemClock.elapsedRealtime() < deadline && (focused().contains("Home") || focused().contains("Cancel loading") ||
+            focused().contains("Try again") || focused().contains("Refresh row"))) SystemClock.sleep(300);
+        key(KeyEvent.KEYCODE_MENU); waitFocused("More like this");
+        key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN); waitFocused("Don't recommend this channel");
+        key(KeyEvent.KEYCODE_DPAD_CENTER); SystemClock.sleep(700);
+        learned = new org.json.JSONObject(getTargetContext().getSharedPreferences("recommendation_interests", 0).getString("profile", "{}"));
+        require(learned.getJSONArray("blocked").length() == 1, "Minified channel exclusion was not persisted");
+        require(!focused().isEmpty(), "Feedback lost remote focus on Home");
+        capturePlayer("/data/local/tmp/aprion-recommendations-v2-home.png");
+        marker("RECOMMENDATIONS_V2 contextualPlayer=true implicitWatchLearning=true moreLikeThisPersisted=true dismissalPersisted=true channelBlockPersisted=true pausePositionPreserved=true homeFocusRestored=true playbackStopped=true");
+    }
+    private double scoreTotal(org.json.JSONObject scores) throws Exception {
+        double sum = 0; java.util.Iterator<String> keys = scores.keys();
+        while (keys.hasNext()) sum += scores.getDouble(keys.next());
+        return sum;
     }
     private void openPinnedResult(String title, boolean longVideo) {
         AccessibilityNodeInfo result = null;

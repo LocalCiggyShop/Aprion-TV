@@ -22,7 +22,7 @@ class ContinueWatching(context: Context) {
         state = next
         val videos = JSONArray()
         next.videos.forEach { entry -> videos.put(JSONObject().put("id", entry.video.id.value)
-            .put("title", entry.video.title).put("channel", entry.video.channel).put("position", entry.positionMs)
+            .put("title", entry.video.title).put("channel", entry.video.channel).put("channelId", entry.video.channelId ?: "").put("position", entry.positionMs)
             .put("duration", entry.durationMs).put("genre", entry.genre?.name ?: "")) }
         prefs.edit().putString("records", JSONObject().put("videos", videos).put("finished", JSONArray(next.finished)).toString()).apply()
     }
@@ -41,7 +41,8 @@ class ContinueWatching(context: Context) {
             val duration = item.getLong("duration"); val position = item.getLong("position")
             require(duration in 1..ContinueWatchingState.MAX_DURATION_MS && position in 1_000 until duration && id.value !in finished)
             UnfinishedVideo(VideoSummary(id, item.getString("title").take(200), item.getString("channel").take(120), null,
-                duration / 1000), position, duration, Genre.entries.firstOrNull { it.name == item.optString("genre") })
+                duration / 1000, channelId = item.optString("channelId").takeIf { it.matches(Regex("UC[A-Za-z0-9_-]{22}")) }),
+                position, duration, Genre.entries.firstOrNull { it.name == item.optString("genre") })
         }.getOrNull() }.distinctBy { it.video.id }
         ContinueWatchingState(videos, finished)
     }.getOrDefault(ContinueWatchingState())

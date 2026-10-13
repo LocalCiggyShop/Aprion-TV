@@ -24,6 +24,7 @@ import org.privateview.quietscreen.core.VideoSummary
 import org.privateview.quietscreen.core.WatchTime
 import org.privateview.quietscreen.core.Genre
 import org.privateview.quietscreen.core.GenreClassifier
+import org.privateview.quietscreen.core.RecommendationFeedback
 import org.privateview.quietscreen.playback.PlayerController
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -32,6 +33,7 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
     watched: (Long, Long, Genre?) -> Unit = { _, _, _ -> }, startPositionMs: Long = 0,
     progress: (Long, Long, Boolean, Genre?) -> Unit = { _, _, _, _ -> },
     recommendations: org.privateview.quietscreen.presentation.BrowseViewModel? = null,
+    feedback: (VideoSummary, RecommendationFeedback) -> Unit = { _, _ -> },
     playNext: (VideoSummary, Genre?) -> Unit = { _, _ -> }, back: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -58,6 +60,9 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
     fun detectedGenre(): Genre? = controller.plan?.genre
         ?: GenreClassifier.classify(video.copy(title = controller.plan?.title ?: video.title))
     fun leavePlayer() { exit.release(); back() }
+    LaunchedEffect(video.id, controller.plan) {
+        recommendations?.context(video.copy(title = controller.plan?.title ?: video.title), controller.plan?.related.orEmpty())
+    }
 
     LaunchedEffect(controller) {
         // External captions failed qualification; keep them disabled in this trial.
@@ -110,10 +115,9 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
         exit.release = ::release
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) release() }
         lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer); release() }
+        onDispose { lifecycle.removeObserver(observer); release(); recommendations?.clearContext(video.id) }
     }
-    val recommendationRows = recommendations?.rows?.collectAsStateWithLifecycle()?.value
-    val recommendationRow = recommendationRows?.firstOrNull { it.recommended }
+    val recommendationRow = recommendations?.playerRow?.collectAsStateWithLifecycle()?.value
         ?: org.privateview.quietscreen.presentation.BrowseRow(null, loaded = true, recommended = true)
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(factory = { view }, modifier = Modifier.fillMaxSize())
@@ -135,7 +139,7 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
             back = ::leavePlayer, retry = { if (!released) controller.start(video.id, settings.maxHeight, startPositionMs = position.takeIf { it > 0 } ?: startPositionMs) },
             qualityChoices = { listOf("Auto (up to ${settings.maxHeight}p)" to { controller.selectQuality(null, settings.maxHeight) }) +
                 controller.qualityHeights().map { height -> "${height}p" to { controller.selectQuality(height, settings.maxHeight) } } },
-            audioChoices = { controller.audioChoices().map { choice -> (choice.label + if (choice.selected) " ✓" else "") to { controller.selectAudio(choice.key) } } })
+            audioChoices = { controller.audioChoices().map { choice -> (choice.label + if (choice.selected) " ✓" else "") to { controller.selectAudio(choice.key) } } }, feedback = feedback)
     }
 }
 

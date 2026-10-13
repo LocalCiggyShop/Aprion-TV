@@ -54,7 +54,7 @@ class UpdateManager private constructor(private val context: Context) {
         if (confirmation != null) { mutable.value = mutable.value.copy(message = "Confirm the update to continue.", ready = true); return }
         if (installing) return
         val age = System.currentTimeMillis() - prefs.getLong("lastCheck", 0)
-        if (mutable.value.automatic && (age < 0 || age >= 6 * 60 * 60 * 1000L || envelope.exists())) check()
+        if (mutable.value.automatic && (age < 0 || age >= 6 * 60 * 60 * 1000L || envelope.exists())) check(automaticCheck = true)
     }
 
     fun leaveForeground() { foreground = false; cancel() }
@@ -69,7 +69,7 @@ class UpdateManager private constructor(private val context: Context) {
         mutable.value = mutable.value.copy(message = "Update cancelled. Choose Check for updates to try again.", detail = null, ready = false)
     }
 
-    fun check() {
+    fun check(automaticCheck: Boolean = false) {
         if (!foreground || job?.isCompleted == false || installing) return
         if (!configured) { mutable.value = mutable.value.copy(message = "This development build has no public update location."); return }
         if (context.packageName != "org.privateview.quietscreen") {
@@ -154,7 +154,7 @@ class UpdateManager private constructor(private val context: Context) {
                 prefs.edit().putLong("lastCheck", System.currentTimeMillis()).apply()
                 mutable.value = mutable.value.copy(message = available?.let { "Update ${it.versionName} downloaded and verified." } ?: "You have the latest version.", busy = false, ready = available != null, phase = UpdatePhase.IDLE,
                     detail = detail(if (repaired) "QS-U-OK-CACHE-REPAIRED" else "QS-U-OK", source, primary?.code))
-                if (available != null && foreground && mutable.value.automatic &&
+                if (automaticCheck && available != null && foreground && mutable.value.automatic &&
                     prefs.getLong("attemptedVersion", 0) != available.versionCode && context.packageManager.canRequestPackageInstalls()) install()
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { failed(error, step, source, primary?.code) }

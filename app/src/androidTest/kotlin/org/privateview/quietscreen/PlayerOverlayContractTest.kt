@@ -29,7 +29,7 @@ class PlayerOverlayContractTest {
         ui.serviceInfo = service
         if (android.os.Build.VERSION.SDK_INT >= 33) ui.clearCache()
         val result = mutableListOf<AccessibilityNodeInfo>()
-        fun visit(node: AccessibilityNodeInfo) { if (result.size >= 2000) return; result += node; for (index in 0 until node.childCount) node.getChild(index)?.let(::visit) }
+        fun visit(node: AccessibilityNodeInfo) { if (result.size >= 2000 || !node.refresh()) return; result += node; for (index in 0 until node.childCount) node.getChild(index)?.let(::visit) }
         ui.windows.mapNotNull { it.root }.filter { it.packageName?.toString() == instrument.targetContext.packageName }.forEach(::visit)
         return result
     }
@@ -42,7 +42,41 @@ class PlayerOverlayContractTest {
         while (SystemClock.elapsedRealtime() < until) { if (condition()) return; Thread.sleep(60) }
         assertTrue("Condition timed out; focus=${focused().take(400)}", condition())
     }
-    private fun key(code: Int) { instrument.sendKeyDownUpSync(code); Thread.sleep(150) }
+    private fun key(code: Int) {
+        val now = SystemClock.uptimeMillis()
+        assertTrue(instrument.uiAutomation.injectInputEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0), true))
+        assertTrue(instrument.uiAutomation.injectInputEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0), true))
+        Thread.sleep(150)
+    }
+
+    @Test fun recommendationFeedbackMenuDoesNotPlayOrSeekAndRestoresShelfFocus() {
+        withFixture { host ->
+            var selected: RecommendationFeedback? = null; var opens = 0; var position = 30_000L
+            onMain { host.setContent { MaterialTheme {
+                PlayerOverlay(PlayerOverlayInfo(video(90), position, 120_000, false, false, "Paused", hasPlan = true, canSeek = true),
+                    BrowseRow(null, listOf(video(91), video(92)), loaded = true, recommended = true),
+                    {}, {}, {}, {}, { position += it }, { _, _ -> opens++ }, {}, {}, { emptyList() }, { emptyList() },
+                    feedback = { target, action -> assertEquals(video(91).id, target.id); selected = action })
+            } } }
+            await { focused().contains("Play video") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN); await { focused().contains("Recommendation 91") }
+            key(KeyEvent.KEYCODE_MENU); await { focused().trim() == "More like this" }
+            key(KeyEvent.KEYCODE_DPAD_DOWN); await { focused().trim() == "Not interested" }
+            key(KeyEvent.KEYCODE_DPAD_CENTER); await { selected == RecommendationFeedback.LESS && focused().contains("Recommendation 91") }
+            assertEquals(0, opens); assertEquals(30_000L, position)
+            key(KeyEvent.KEYCODE_MENU); await { focused().trim() == "More like this" }
+            key(KeyEvent.KEYCODE_BACK); await { focused().contains("Recommendation 91") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT); await { focused().contains("Recommendation 92") }
+            val down = SystemClock.uptimeMillis()
+            instrument.sendKeySync(KeyEvent(down, down, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+            instrument.sendKeySync(KeyEvent(down, down + 600, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 1,
+                0, -1, 0, KeyEvent.FLAG_LONG_PRESS))
+            instrument.sendKeySync(KeyEvent(down, down + 601, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+            await { focused().trim() == "More like this" }
+            assertEquals(0, opens)
+            key(KeyEvent.KEYCODE_BACK); await { focused().contains("Recommendation 92") }
+        }
+    }
 
     @Test fun seekPauseMenusRecommendationSelectionAndRetryPreserveTheirContexts() {
         withFixture { host ->
@@ -184,7 +218,10 @@ class PlayerOverlayContractTest {
         preferences.edit().putBoolean("automatic", false).commit()
         val host = instrument.startActivitySync(Intent(instrument.targetContext, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
-        try { test(host) } finally {
+        try {
+            await { focused().contains("Home") }
+            test(host)
+        } finally {
             onMain { host.finish() }; instrument.waitForIdleSync()
             preferences.edit().putBoolean("automatic", automatic).commit()
         }

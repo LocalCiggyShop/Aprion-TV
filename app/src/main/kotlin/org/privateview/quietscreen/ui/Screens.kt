@@ -102,6 +102,8 @@ fun SearchScreen(model: SearchViewModel, home: () -> Unit, play: (VideoSummary) 
     val input = remember { FocusRequester() }
     val submit = remember { FocusRequester() }
     val restore = remember { FocusRequester() }
+    val sortControl = remember { FocusRequester() }
+    var sortMenu by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
     val list = rememberLazyListState(model.listIndex, model.listOffset)
     val restoreId = remember { model.focusedVideo }
@@ -138,6 +140,7 @@ fun SearchScreen(model: SearchViewModel, home: () -> Unit, play: (VideoSummary) 
                 keyboardActions = KeyboardActions(onSearch = { keyboard?.hide(); model.search() }),
                 decorationBox = { inner -> Box { if (state.query.isEmpty()) Text("Title, channel or video ID", color = Muted, fontSize = 19.sp); inner() } })
             TvAction(if (state.busy) "Search again" else "Search", Modifier.focusRequester(submit)) { keyboard?.hide(); model.search() }
+            TvAction("Sort: ${state.sort.label}", Modifier.focusRequester(sortControl)) { keyboard?.hide(); sortMenu = true }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(state.message, color = if (state.error == null) Muted else Warning, fontSize = 14.sp, modifier = Modifier.weight(1f))
@@ -166,6 +169,9 @@ fun SearchScreen(model: SearchViewModel, home: () -> Unit, play: (VideoSummary) 
             if (state.cursor != null) item { TvAction("More results", enabled = !state.busy) { model.search(true) } }
         }
     }
+    if (sortMenu) SearchSortDialog(state.sort, close = { sortMenu = false; sortControl.requestFocus() }) {
+        sortMenu = false; model.sort(it); sortControl.requestFocus()
+    }
 }
 
 @Composable
@@ -180,7 +186,7 @@ internal fun Thumbnail(url: String?, modifier: Modifier = Modifier.size(112.dp, 
 }
 
 @Composable
-fun SettingsScreen(settings: AppSettings, updates: UpdateManager, personalization: Personalization, clearSession: () -> Unit, home: () -> Unit) {
+fun SettingsScreen(settings: AppSettings, updates: UpdateManager, personalization: Personalization, clearSession: () -> Unit, home: () -> Unit, reviewUpdate: () -> Unit = {}) {
     val updateState by updates.state.collectAsStateWithLifecycle()
     val first = remember { FocusRequester() }
     var height by remember { mutableIntStateOf(settings.maxHeight) }
@@ -206,8 +212,8 @@ fun SettingsScreen(settings: AppSettings, updates: UpdateManager, personalizatio
         }
         Text(message, color = Accent, fontSize = 14.sp)
         Text("Recommended for you", color = Cloud, fontSize = 19.sp)
-        Text("Recommended learns which types of videos you enjoy from how long you watch and how much you finish. You'll see more of your favourites, along with fresh discoveries, when you return Home.", color = Muted, fontSize = 14.sp)
-        Text("Videos from Search count too when their type can be identified. Learning usually starts after 30 seconds, or after 10 seconds and 80% of a short video. Even brief unfinished watches can appear in Continue watching.", color = Muted, fontSize = 14.sp)
+        Text("Recommended learns your favourite topics, channels and genres from what you watch. Home mixes those interests with discoveries; player suggestions relate to the current video.", color = Muted, fontSize = 14.sp)
+        Text("Search videos count too, even without a recognised genre. Learning usually starts after 30 seconds, or 10 seconds and 80% of a short video. Hold OK or press Menu on a card for More like this, Not interested or Don't recommend this channel.", color = Muted, fontSize = 14.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             TvAction("Personalization: " + if (personalized) "On" else "Off") {
                 personalized = !personalized; personalization.enabled = personalized
@@ -216,7 +222,7 @@ fun SettingsScreen(settings: AppSettings, updates: UpdateManager, personalizatio
             TvAction("Reset personalization") { personalization.reset(); personalizationMessage = "Your learned preferences are erased. Recommended starts fresh." }
         }
         Text(personalizationMessage, color = Accent, fontSize = 14.sp)
-        Text("Turn personalization off to pause learning and see a varied mix. Reset personalization erases your learned preferences. Neither option clears Continue watching.", color = Muted, fontSize = 14.sp)
+        Text("Personalization off pauses watch learning and topic searches. Feedback exclusions still apply. Reset erases preferences and feedback. Neither option clears Continue watching.", color = Muted, fontSize = 14.sp)
         Text("App updates", color = Cloud, fontSize = 19.sp)
         Text(updateState.message, color = Muted, fontSize = 14.sp)
         updateState.detail?.let { Text(it, color = Muted, fontSize = 12.sp) }
@@ -224,7 +230,7 @@ fun SettingsScreen(settings: AppSettings, updates: UpdateManager, personalizatio
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             TvAction("Automatic updates: " + if (updateState.automatic) "On" else "Off") { updates.automatic(!updateState.automatic) }
             TvAction("Check for updates", enabled = !updateState.busy) { updates.check() }
-            if (updateState.ready) TvAction("Install update", enabled = !updateState.busy) { updates.install() }
+            if (updateState.ready) TvAction("Review update", enabled = !updateState.busy, onClick = reviewUpdate)
         }
         Spacer(Modifier.height(12.dp))
         TvAction("Back to Home", onClick = home)
@@ -239,7 +245,7 @@ fun AboutScreen(home: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(40.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Heading("About Aprion TV", "Version ${BuildConfig.VERSION_NAME}")
         Text("An independent player for public videos. No account is needed.", color = Cloud, fontSize = 21.sp)
-        Text("Search stays in memory. Playback/update preferences and eight genre scores are private on-device. Continue watching saves up to 24 unfinished video records and 100 completed IDs; Clear browsing session erases them. Backups are disabled. Reset or pause personalization in Settings. No accounts, telemetry or external recommender.\n\nBrowsing, search, thumbnails and playback contact YouTube/CDNs; updates contact GitHub. Providers see normal requests and your IP. Genre scores and saved viewing records are never uploaded. Resuming requests the selected video's public ID from YouTube as ordinary playback does.\n\nVideo availability can change. Restricted/protected videos are unsupported. Back hides playback controls; press Back again to return Home. Home stops playback.", color = Muted, fontSize = 15.sp, lineHeight = 22.sp)
+        Text("Search queries stay in memory. Preferences, bounded topic/channel scores and feedback stay privately on-device, with backups disabled. Continue watching saves 24 unfinished records and 100 completed IDs; Clear browsing session erases them. Reset personalization separately clears interests and feedback. No accounts or telemetry.\n\nBrowsing may send up to two words from learned video topics to YouTube for discovery when personalization is on. Scores and stored viewing/feedback lists are never uploaded. Player suggestions reuse the video's existing response. YouTube/CDNs see ordinary requests and your IP; updates contact GitHub.\n\nRestricted/protected videos and captions are unsupported. Back hides player controls; press Back again to return Home.", color = Muted, fontSize = 15.sp, lineHeight = 22.sp)
         Text("Open-source software · GPL-3.0-or-later\nBuilt with AndroidX Media3 and NewPipeExtractor. See the accompanying source and notices.", color = Muted, fontSize = 14.sp)
         Spacer(Modifier.weight(1f))
         TvAction("Back to Home", Modifier.focusRequester(first), onClick = home)
