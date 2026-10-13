@@ -48,7 +48,9 @@ class UpdateRecoveryTest {
             SSLHandshakeException("private certificate details") to UpdateProblem.TLS,
             IllegalArgumentException("UPDATE_SIGNATURE") to UpdateProblem.SIGNATURE,
             IllegalArgumentException("UPDATE_HASH") to UpdateProblem.HASH,
-            IllegalArgumentException("UPDATE_SDK") to UpdateProblem.COMPATIBILITY)
+            IllegalArgumentException("UPDATE_SDK") to UpdateProblem.COMPATIBILITY,
+            IllegalArgumentException("UPDATE_SIGNER_MISSING") to UpdateProblem.SIGNER_MISSING,
+            IllegalArgumentException("UPDATE_SIGNER") to UpdateProblem.SIGNER)
         errors.forEach { (error, problem) ->
             val diagnostic = UpdateDiagnostics.from(IOException("private detail", error), UpdateStep.FEED)
             assertEquals(problem, diagnostic.problem)

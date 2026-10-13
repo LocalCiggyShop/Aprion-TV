@@ -23,15 +23,24 @@ public final class TrialNativeInstrumentation extends Instrumentation {
     private String query;
     private String check;
     private String historyStage;
+    private String managerField;
+    private String installMethod;
     @Override public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
         query = arguments == null ? null : arguments.getString("query");
         check = arguments == null ? null : arguments.getString("check");
         historyStage = arguments == null ? null : arguments.getString("historyStage");
+        managerField = arguments == null ? null : arguments.getString("managerField");
+        installMethod = arguments == null ? null : arguments.getString("installMethod");
         start();
     }
     @Override public void onStart() {
         Bundle result = new Bundle();
+        if ("restoreUpdatePrefs".equals(check)) {
+            try { restoreUpdatePrefs(); result.putString("stream", "OK (private emulator preferences restored)"); finish(Activity.RESULT_OK, result); }
+            catch (Throwable failure) { result.putString("stream", "Private preference restoration failed"); finish(Activity.RESULT_CANCELED, result); }
+            return;
+        }
         int resultCode = Activity.RESULT_OK;
         android.content.SharedPreferences updatePreferences = getTargetContext().getSharedPreferences("updates", android.content.Context.MODE_PRIVATE);
         boolean originalAutomaticUpdates = updatePreferences.getBoolean("automatic", true);
@@ -45,7 +54,10 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         // Idle-network checks run with optional update traffic disabled, then restore the preference.
         updatePreferences.edit().putBoolean("automatic", false).commit();
         try {
-            if ("browse".equals(check)) {
+            if ("updateInstall".equals(check)) {
+                updateInstall(originalAutomaticUpdates);
+                throw new AssertionError("Installer did not replace the process within the bounded observation");
+            } else if ("browse".equals(check)) {
                 security(); passed++;
                 browse(); passed++;
                 result.putString("stream", "\nOK (2 browsing native checks)\n");
@@ -292,6 +304,71 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         require(result.contains("You have the latest version."), "Unexpected update state");
         marker("UPDATE_PRODUCTION manualCheck=true signedFeedVerified=true actionableDetail=true sdk=" + android.os.Build.VERSION.SDK_INT);
     }
+    private void updateInstall(boolean originalAutomatic) throws Exception {
+        org.json.JSONObject backup = new org.json.JSONObject();
+        java.io.File folder = new java.io.File(getTargetContext().getApplicationInfo().dataDir, "shared_prefs");
+        java.io.File[] files = folder.listFiles();
+        if (files != null) for (java.io.File file : files) {
+            if (!file.getName().endsWith(".xml")) continue;
+            String name = file.getName().substring(0, file.getName().length() - 4);
+            org.json.JSONObject values = new org.json.JSONObject();
+            for (java.util.Map.Entry<String, ?> entry : getTargetContext().getSharedPreferences(name, 0).getAll().entrySet()) {
+                Object value = entry.getValue();
+                if ("updates".equals(name) && "automatic".equals(entry.getKey())) value = originalAutomatic;
+                String type = value instanceof Boolean ? "b" : value instanceof Integer ? "i" : value instanceof Long ? "l" : value instanceof Float ? "f" : value instanceof String ? "s" : "set";
+                values.put(entry.getKey(), new org.json.JSONObject().put("t", type).put("v", value instanceof java.util.Set ? new org.json.JSONArray((java.util.Set<?>) value) : value));
+            }
+            backup.put(name, values);
+        }
+        byte[] privateBytes = backup.toString().getBytes("UTF-8");
+        require(privateBytes.length <= 262144, "Private emulator backup exceeded bound");
+        Bundle privateStatus = new Bundle(); privateStatus.putString("privateBackup", android.util.Base64.encodeToString(privateBytes, android.util.Base64.NO_WRAP)); sendStatus(0, privateStatus);
+        java.io.File directory = new java.io.File(getTargetContext().getCacheDir(), "updates"); directory.mkdirs();
+        for (String name : new String[]{"candidate.apk", "candidate.qsu"}) {
+            try (java.io.InputStream input = getContext().getAssets().open(name); java.io.OutputStream output = new java.io.FileOutputStream(new java.io.File(directory, name))) {
+                byte[] buffer = new byte[32768]; int count; while ((count = input.read(buffer)) >= 0) output.write(buffer, 0, count);
+            }
+        }
+        launch();
+        require(managerField != null && managerField.matches("[A-Za-z_$][A-Za-z0-9_$]*") && installMethod != null && installMethod.matches("[A-Za-z_$][A-Za-z0-9_$]*"), "Invalid mapped updater entry point");
+        java.lang.reflect.Field field = activity.getClass().getDeclaredField(managerField); field.setAccessible(true);
+        Object manager = field.get(activity);
+        java.lang.reflect.Method install = manager.getClass().getDeclaredMethod(installMethod); install.setAccessible(true);
+        marker("UPDATE_INSTALL_REQUEST bounded=true realSignedFixture=true sdk=" + android.os.Build.VERSION.SDK_INT);
+        runOnMainSync(() -> { try { install.invoke(manager); } catch (Exception failure) { throw new RuntimeException("Mapped install entry point failed", failure); } });
+        long until = SystemClock.elapsedRealtime() + 15000; boolean captured = false;
+        while (SystemClock.elapsedRealtime() < until) {
+            String state = texts();
+            if (state.contains("Update failed while")) throw new AssertionError("Verified installation failed: " + state.substring(state.indexOf("Update failed while")).substring(0, Math.min(600, state.substring(state.indexOf("Update failed while")).length())));
+            if (!captured && state.contains("Updating Aprion TV")) { capturePlayer("/data/local/tmp/aprion-v035-installing.png"); captured = true; marker("UPDATE_INSTALL_PAGE visible=true screenshot=true"); }
+            SystemClock.sleep(80);
+        }
+    }
+    private void restoreUpdatePrefs() throws Exception {
+        byte[] encoded;
+        try (java.io.InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(getUiAutomation().executeShellCommand("cat /data/local/tmp/aprion-v035-prefs.b64")); java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
+            byte[] buffer = new byte[1024]; int count;
+            while ((count = input.read(buffer)) >= 0) { require(output.size() + count <= 350000, "Restore exceeded bound"); output.write(buffer, 0, count); }
+            encoded = output.toByteArray();
+        }
+        org.json.JSONObject backup = new org.json.JSONObject(new String(android.util.Base64.decode(encoded, android.util.Base64.DEFAULT), "UTF-8"));
+        java.util.Iterator<String> names = backup.keys();
+        while (names.hasNext()) {
+            String name = names.next(); require(name.matches("[A-Za-z0-9_.-]+"), "Invalid preference file");
+            android.content.SharedPreferences.Editor editor = getTargetContext().getSharedPreferences(name, 0).edit().clear();
+            org.json.JSONObject values = backup.getJSONObject(name); java.util.Iterator<String> keys = values.keys();
+            while (keys.hasNext()) {
+                String key = keys.next(); org.json.JSONObject value = values.getJSONObject(key); String type = value.getString("t");
+                if ("b".equals(type)) editor.putBoolean(key, value.getBoolean("v"));
+                else if ("i".equals(type)) editor.putInt(key, value.getInt("v"));
+                else if ("l".equals(type)) editor.putLong(key, value.getLong("v"));
+                else if ("f".equals(type)) editor.putFloat(key, (float)value.getDouble("v"));
+                else if ("s".equals(type)) editor.putString(key, value.getString("v"));
+                else { org.json.JSONArray items = value.getJSONArray("v"); java.util.Set<String> set = new java.util.HashSet<>(); for (int i=0;i<items.length();i++) set.add(items.getString(i)); editor.putStringSet(key,set); }
+            }
+            require(editor.commit(), "Private preference commit failed");
+        }
+    }
     private void continueWatching() throws Exception {
         String record = "{\"videos\":[{\"id\":\"jNQXAC9IVRw\",\"title\":\"Me at the zoo\",\"channel\":\"jawed\",\"position\":5000,\"duration\":19000,\"genre\":\"\"}],\"finished\":[]}";
         android.content.SharedPreferences prefs = getTargetContext().getSharedPreferences("continue_watching", android.content.Context.MODE_PRIVATE);
@@ -405,7 +482,7 @@ public final class TrialNativeInstrumentation extends Instrumentation {
     }
     private void capturePlayer(String path) throws Exception {
         require(path.equals("/data/local/tmp/quietscreen-player-controls.png") || path.equals("/data/local/tmp/quietscreen-player-recommendations.png") ||
-            path.equals("/data/local/tmp/quietscreen-settings-explanations.png"), "Unexpected screenshot destination");
+            path.equals("/data/local/tmp/quietscreen-settings-explanations.png") || path.equals("/data/local/tmp/aprion-v035-installing.png"), "Unexpected screenshot destination");
         try (android.os.ParcelFileDescriptor.AutoCloseInputStream command = new android.os.ParcelFileDescriptor.AutoCloseInputStream(ui().executeShellCommand("screencap -p " + path))) {
             byte[] buffer = new byte[1024]; int total = 0, read;
             while ((read = command.read(buffer)) >= 0) { total += read; require(total <= 8192, "Screenshot command output exceeded bound"); }

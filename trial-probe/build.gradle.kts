@@ -20,6 +20,7 @@ android {
         }
     }
     sourceSets.getByName("main").java.srcDir("../app/src/androidTest/java")
+    sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("update-assets").get().asFile)
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8

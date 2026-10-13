@@ -2,7 +2,7 @@
 
 An independent Android TV player for public YouTube videos, with native Media3 playback, remote navigation, search, quality and audio-track controls. No account, analytics or ad SDK is included. This project is not affiliated with YouTube or Google.
 
-Version **0.3.4-beta** (version code 8) introduces Aprion TV branding, a personalized Recommended row, brief Search-video resume saving and redesigned playback controls with a buffering spinner. Signed updates retain the existing package and permanent key. Physical-TV compatibility and audio/sync testing remain pending. Captions are unsupported. The unofficial extraction method can break when YouTube changes; ad-free playback is not guaranteed.
+Version **0.3.5-beta** (version code 9). Corrects missing Android APK certificate information, preserves strict key matching, and adds TV update download and installation progress screens. Signed updates retain the existing package and permanent key. Physical-TV compatibility and audio/sync qualification remain limited. Captions are unsupported. Extraction can break when YouTube changes; ad-free playback is not guaranteed.
 
 The app checks for and downloads updates while Home or Settings is open. Signed metadata and the APK must match the installed app's package, higher version and certificate. Android may require installation approval. Updates use the configured [Aprion TV repository](https://github.com/LocalCiggyShop/QuietScreen).
 

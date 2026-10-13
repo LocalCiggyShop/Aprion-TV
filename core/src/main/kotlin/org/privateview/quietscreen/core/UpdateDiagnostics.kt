@@ -24,6 +24,7 @@ enum class UpdateProblem(val advice: String) {
     HASH("The downloaded APK did not match its signed checksum. Retry the download."),
     IDENTITY("The APK package, version or Android requirements did not match the signed update."),
     SIGNER("The APK was not signed by the installed app's key. Use the official release."),
+    SIGNER_MISSING("Android did not return the APK's signing certificate. Nothing was installed. Report this code and your Android version, or install the official APK with Downloader."),
     ARCHIVE("Android could not read the downloaded APK. Retry or use the official release."),
     STORAGE("The update could not be saved. Free space on the TV and retry."),
     INSTALL_PERMISSION("Allow installation from Aprion TV in Android settings, then retry."),
@@ -66,6 +67,7 @@ object UpdateDiagnostics {
         "UPDATE_HASH" -> UpdateProblem.HASH
         "UPDATE_ARCHIVE" -> UpdateProblem.ARCHIVE
         "UPDATE_SIGNER" -> UpdateProblem.SIGNER
+        "UPDATE_SIGNER_MISSING" -> UpdateProblem.SIGNER_MISSING
         "UPDATE_STORAGE" -> UpdateProblem.STORAGE
         else -> null
     }

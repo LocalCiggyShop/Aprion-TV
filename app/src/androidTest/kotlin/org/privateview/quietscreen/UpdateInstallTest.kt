@@ -6,7 +6,7 @@ import org.junit.Test
 import java.io.File
 import org.privateview.quietscreen.updates.UpdateManager
 
-/** Self replacement terminates instrumentation. Verify fixture version 8 externally, then restore the actual app. */
+/** Self replacement terminates instrumentation. Verify the next-version fixture externally, then restore the actual app. */
 class UpdateInstallTest {
     @Test fun installsVerifiedSelfUpdateOnOwnedEmulator() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()

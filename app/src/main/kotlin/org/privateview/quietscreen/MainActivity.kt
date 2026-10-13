@@ -19,6 +19,7 @@ import org.privateview.quietscreen.core.Genre
 import org.privateview.quietscreen.core.GenreClassifier
 import org.privateview.quietscreen.ui.*
 import org.privateview.quietscreen.updates.UpdateManager
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 enum class Screen { HOME, SEARCH, SETTINGS, ABOUT, PLAYER }
 
@@ -54,12 +55,15 @@ class MainActivity : ComponentActivity() {
         browseModel.continueWatching(continuing.videos())
         setContent {
             MaterialTheme {
+                val updateStatus by updates.state.collectAsStateWithLifecycle()
                 LaunchedEffect(screen) {
                     if (screen == Screen.HOME || screen == Screen.SETTINGS) updates.enterForeground()
                     else updates.leaveForeground()
                 }
                 Box(Modifier.fillMaxSize().background(Ink)) {
-                    when (screen) {
+                    if (updateStatus.showProgress && (screen == Screen.HOME || screen == Screen.SETTINGS)) {
+                        UpdateScreen(updateStatus, updates::cancelUpdate)
+                    } else when (screen) {
                         Screen.HOME -> BrowseScreen(browseModel,
                             initialFocus = homeFocus,
                             search = { homeFocus = "search"; screen = Screen.SEARCH }, settings = { homeFocus = "settings"; screen = Screen.SETTINGS },

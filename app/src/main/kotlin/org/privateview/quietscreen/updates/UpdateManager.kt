@@ -11,13 +11,11 @@ import android.provider.Settings
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.io.File
 import java.io.IOException
 import org.privateview.quietscreen.BuildConfig
 import org.privateview.quietscreen.core.*
-
-data class UpdateStatus(val message: String = "Updates are checked automatically when you open the app.",
-    val busy: Boolean = false, val ready: Boolean = false, val automatic: Boolean = true, val detail: String? = null)
 
 class UpdateManager private constructor(private val context: Context) {
     private val prefs = context.getSharedPreferences("updates", Context.MODE_PRIVATE)
@@ -40,7 +38,8 @@ class UpdateManager private constructor(private val context: Context) {
     }
     private fun failed(error: Throwable, step: UpdateStep, source: UpdateSource? = null, priorCode: String? = null) {
         val diagnostic = UpdateDiagnostics.from(error, step)
-        mutable.value = mutable.value.copy(message = diagnostic.message, detail = detail(diagnostic.code, source, priorCode), busy = false, ready = false)
+        mutable.value = mutable.value.copy(message = diagnostic.message, detail = detail(diagnostic.code, source, priorCode) +
+            ((error as? UpdateSignerFailure)?.safeDetail?.let { " · $it" } ?: ""), busy = false, ready = false, phase = UpdatePhase.IDLE)
     }
     private fun <T> save(operation: () -> T): T = try { operation() } catch (_: IOException) { throw UpdateFailure(UpdateProblem.STORAGE) }
 
@@ -61,7 +60,13 @@ class UpdateManager private constructor(private val context: Context) {
     fun leaveForeground() { foreground = false; cancel() }
     private fun cancel() {
         transport.cancel(); job?.cancel()
-        if (!installing) mutable.value = mutable.value.copy(busy = false)
+        if (!installing) mutable.value = mutable.value.copy(busy = false, phase = UpdatePhase.IDLE)
+    }
+
+    fun cancelUpdate() {
+        if (!mutable.value.cancellable || installing) return
+        cancel()
+        mutable.value = mutable.value.copy(message = "Update cancelled. Choose Check for updates to try again.", detail = null, ready = false)
     }
 
     fun check() {
@@ -78,7 +83,8 @@ class UpdateManager private constructor(private val context: Context) {
             var source = UpdateSource.RAW
             var repaired = false
             var primary: UpdateDiagnostic? = null
-            mutable.value = mutable.value.copy(message = "Checking for updates…", busy = true, ready = false, detail = null)
+            mutable.value = mutable.value.copy(message = "Checking for updates…", busy = true, ready = false, detail = null,
+                phase = UpdatePhase.CHECKING, downloadedBytes = 0, totalBytes = 0)
             try {
                 val available = withContext(Dispatchers.IO) {
                     val current = UpdateApk.installed(context)
@@ -107,23 +113,31 @@ class UpdateManager private constructor(private val context: Context) {
                     if (candidate == null) { apk.delete(); envelope.delete(); null }
                     else {
                         repaired = UpdateCache.obtain(directory, bytes, verify = { file ->
-                            step = UpdateStep.APK; ensureActive(); UpdateApk.verify(context, file, candidate)
+                            step = UpdateStep.APK; ensureActive()
+                            mutable.update { it.copy(message = "Verifying update ${candidate.versionName}…", phase = UpdatePhase.VERIFYING,
+                                downloadedBytes = file.length().coerceIn(0, candidate.apkBytes), totalBytes = candidate.apkBytes) }
+                            UpdateApk.verify(context, file, candidate)
                         }, download = { partial ->
                             step = UpdateStep.DOWNLOAD
-                            mutable.value = mutable.value.copy(message = "Downloading update ${candidate.versionName}…")
                             // One retry obtains a fresh short-lived redirect if GitHub's CDN
                             // rejects an expired link. Every attempt retains the signed bounds.
                             for (attempt in 0..1) {
+                                mutable.update { it.copy(message = if (attempt == 0) "Downloading update ${candidate.versionName}…" else "Retrying update download…",
+                                    phase = UpdatePhase.DOWNLOADING, downloadedBytes = 0, totalBytes = candidate.apkBytes) }
                                 try { transport.read(candidate.apkUrl, false) { stream ->
                                     val output = save { partial.outputStream() }
                                     try {
-                                        val buffer = ByteArray(32768); var total = 0L
+                                        val buffer = ByteArray(32768); var total = 0L; var lastReport = 0L
                                         while (true) {
                                             ensureActive()
                                             val count = stream.read(buffer); if (count < 0) break
                                             total += count
                                             if (total > candidate.apkBytes) throw UpdateFailure(UpdateProblem.SIZE)
                                             save { output.write(buffer, 0, count) }
+                                            val now = android.os.SystemClock.elapsedRealtime()
+                                            if (now - lastReport >= 250 || total == candidate.apkBytes) {
+                                                mutable.update { it.copy(downloadedBytes = total) }; lastReport = now
+                                            }
                                         }
                                         if (total != candidate.apkBytes) throw UpdateFailure(UpdateProblem.SIZE)
                                     } finally { save { output.close() } }
@@ -138,7 +152,7 @@ class UpdateManager private constructor(private val context: Context) {
                     }
                 }
                 prefs.edit().putLong("lastCheck", System.currentTimeMillis()).apply()
-                mutable.value = mutable.value.copy(message = available?.let { "Update ${it.versionName} downloaded and verified." } ?: "You have the latest version.", busy = false, ready = available != null,
+                mutable.value = mutable.value.copy(message = available?.let { "Update ${it.versionName} downloaded and verified." } ?: "You have the latest version.", busy = false, ready = available != null, phase = UpdatePhase.IDLE,
                     detail = detail(if (repaired) "QS-U-OK-CACHE-REPAIRED" else "QS-U-OK", source, primary?.code))
                 if (available != null && foreground && mutable.value.automatic &&
                     prefs.getLong("attemptedVersion", 0) != available.versionCode && context.packageManager.canRequestPackageInstalls()) install()
@@ -163,7 +177,7 @@ class UpdateManager private constructor(private val context: Context) {
         }
         installing = true
         job = scope.launch {
-            mutable.value = mutable.value.copy(message = "Preparing installation…", busy = true, detail = null)
+            mutable.value = mutable.value.copy(message = "Preparing installation…", busy = true, detail = null, phase = UpdatePhase.PREPARING)
             try {
                 withContext(Dispatchers.IO) {
                     val current = UpdateApk.installed(context)
@@ -191,13 +205,14 @@ class UpdateManager private constructor(private val context: Context) {
                             val callback = PendingIntent.getBroadcast(context, id, Intent(context, UpdateInstallReceiver::class.java), flags)
                             prefs.edit().putLong("attemptedVersion", candidate.versionCode).apply()
                             withContext(Dispatchers.Main.immediate) {
-                                mutable.value = mutable.value.copy(message = "Android is installing the update…", busy = true)
+                                mutable.value = mutable.value.copy(message = "Android is installing the update…", busy = true, phase = UpdatePhase.INSTALLING,
+                                    downloadedBytes = candidate.apkBytes, totalBytes = candidate.apkBytes)
                             }
                             session.commit(callback.intentSender)
                         }
                     } catch (failure: Exception) { installer.abandonSession(id); throw failure }
                 }
-            } catch (cancelled: CancellationException) { installing = false; mutable.value = mutable.value.copy(busy = false); throw cancelled }
+            } catch (cancelled: CancellationException) { installing = false; mutable.value = mutable.value.copy(busy = false, phase = UpdatePhase.IDLE); throw cancelled }
             catch (error: Exception) { installing = false; failed(error, UpdateStep.INSTALL) }
         }
     }
@@ -208,10 +223,10 @@ class UpdateManager private constructor(private val context: Context) {
                 @Suppress("DEPRECATION")
                 val next = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
                 installing = false; confirmation = next
-                mutable.value = mutable.value.copy(message = "Android requires approval to install the update.", busy = false, ready = true)
+                mutable.value = mutable.value.copy(message = "Android requires approval to install the update.", busy = false, ready = true, phase = UpdatePhase.IDLE)
                 if (foreground && next != null) install()
             }
-            PackageInstaller.STATUS_SUCCESS -> { installing = false; apk.delete(); envelope.delete(); mutable.value = mutable.value.copy(message = "Update installed. Reopen Aprion TV.", busy = false, ready = false) }
+            PackageInstaller.STATUS_SUCCESS -> { installing = false; apk.delete(); envelope.delete(); mutable.value = mutable.value.copy(message = "Update installed. Reopen Aprion TV.", busy = false, ready = false, phase = UpdatePhase.IDLE) }
             else -> {
                 installing = false; confirmation = null
                 val reason = when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
