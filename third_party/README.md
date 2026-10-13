@@ -9,7 +9,7 @@ Archives were obtained from official GitHub codeload endpoints. Their hashes and
 
 The only runtime upstream source modification initially replaces both JavaScript compilation/evaluation entry points with immediate `SecurityException`. No source transformation or fetched script is executed. Some videos may consequently be unsupported; this is intentionally tested before expanding the UI.
 
-For the 0.3.1 security patch, Google API-key-shaped strings in 90 upstream JSON test recordings were replaced with deterministic non-credential placeholders. They came verbatim from the pinned public upstream sources, not from a QuietScreen account. GitHub did not establish their validity. These test resources are not packaged in the APK. Original source commits/release archives may still contain the old recordings; sanitizing the current tree does not erase historical copies.
+For the 0.3.1 security patch, Google API-key-shaped strings in 90 upstream JSON test recordings were replaced with deterministic non-credential placeholders. They came verbatim from the pinned public upstream sources, not from an Aprion TV account. GitHub did not establish their validity. These test resources are not packaged in the APK. Original source commits/release archives may still contain the old recordings; sanitizing the current tree does not erase historical copies.
 
 The broader Gitleaks audit also identified JWT/generic-token-shaped captured values in upstream test resources; those were replaced with explicit TEST_ONLY_TOKEN placeholders. These substitutions affect recorded tests, not runtime extraction code. The guard exempts only these exact synthetic placeholder formats in the test-resource paths, not the entire fixture directory.
 

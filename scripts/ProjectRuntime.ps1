@@ -14,7 +14,7 @@ function Enter-QuietScreenOperation {
         })
         if ($taskOwnedProcesses.Count) {
             if ($Operation -eq 'Build') {
-                throw 'The project emulator is running. Preserve playback evidence and close QuietScreenTV before building; this helper will not close it for you.'
+                throw 'The project emulator is running. Preserve playback evidence and close the Aprion TV emulator before building; this helper will not close it for you.'
             }
             throw 'The project SDK emulator is running or still closing. Confirm the owned AVD and wait for it to exit before launching another instance.'
         }

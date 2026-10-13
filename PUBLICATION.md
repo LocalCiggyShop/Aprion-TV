@@ -2,8 +2,10 @@
 
 The first release is a beta while physical-TV/audio/sync testing remains pending. Do not upload development/trial/test APKs, historical dist bundles or the complete workspace.
 
-1. In VS Code Source Control, stage the eligible files, review the staged diff, commit, then use Publish Branch/Push to the existing [Aprion TV repository](https://github.com/LocalCiggyShop/QuietScreen). The local origin and long-path support are configured. Local evidence, tools and signing material are excluded; the configured commit email uses GitHub's no-reply format.
+1. In VS Code Source Control, stage the eligible files, review the staged diff, commit, then use Publish Branch/Push to the existing [Aprion TV repository](https://github.com/LocalCiggyShop/Aprion-TV). The local origin and long-path support are configured. Local evidence, tools and signing material are excluded; the configured commit email uses GitHub's no-reply format.
 2. `release/public-updates.properties` defines the public GitHub owner/repository/branch used by the app. Keep it correct for every release.
+
+   The user authorized renaming the existing repository to `LocalCiggyShop/Aprion-TV` on 13 October 2026, accepting a manual app update. Installed versions through 0.3.6-beta pin the old repository and cannot follow its redirects. Future builds now pin Aprion-TV with the same package/key/protocol. Preserve historical releases and the existing signed feed; do not edit its signed URL as plain text. The local release launcher accepts a permanently signed legacy URL only while inspecting the historical baseline, matches it to the renamed API asset with all hash/size/package/version/certificate checks intact, and requires Aprion-TV URLs for new signed candidates. Publish/hash-verify the first rebuilt APK through all normal gates before its new signed feed. Users must then manually install that APK over the old app; do not advise uninstalling or reinstalling the unchanged old APK to restore updates.
 3. Create the permanent signing key with `scripts/Release-Key.ps1` (already created on the prepared workstation). Run `scripts/Backup-ReleaseKey.ps1` interactively to make a portable encrypted backup with a passphrase you save privately. Copy the verified `portable-backup.p12` to private offline storage. Losing the key prevents compatible updates. The local Windows-protected password file is not a portable backup. Never upload any signing material.
 4. Build/test/lint the unsigned release with strict dependency verification, then sign with `scripts/Sign-Release.ps1`. Inspect the exact signed APK's signature, package/version, permissions and contents and complete a malware scan. Reuse the key and increase versionCode for every update.
 5. Run `./scripts/Run-SecretAudit.ps1 -Install` to provision the checksum-pinned scanner and `git config core.hooksPath .githooks` to activate the pre-push checks. Source export also requires both publication checks to pass. GitHub secret scanning and push protection are enabled; the Actions workflow checks every new push. These checks reduce risk but cannot guarantee detection of every secret or software vulnerability.
@@ -14,8 +16,8 @@ The first release is a beta while physical-TV/audio/sync testing remains pending
 
 Do not submit private tokens or signed URLs to public URL shorteners. A real Downloader installation and app-update round trip are required after hosting is available.
 
-The already published v0.3.3-beta Downloader URL retains its original asset name:
+The already published v0.3.3-beta asset retains its original name in the renamed repository:
 
-`https://github.com/LocalCiggyShop/QuietScreen/releases/download/v0.3.3-beta/QuietScreen.apk`
+`https://github.com/LocalCiggyShop/Aprion-TV/releases/download/v0.3.3-beta/QuietScreen.apk`
 
 For later releases, increase app/build.gradle.kts versionCode and versionName, build/test/lint, sign with the same permanent key and a new tag, export matching source, publish assets, then replace the signed feed. Automatic checking/downloading requires the app to be foreground on Home/Settings and the TV to be online. When an update is ready, Settings → Install update opens the one-time Android installation-source permission if needed; afterward eligible devices can install automatically. Other TVs may require a confirmation for each update. No URL revisit is needed.
