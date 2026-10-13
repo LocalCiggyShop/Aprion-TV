@@ -123,7 +123,7 @@ class PlayerController(private val context: Context, private val resolver: Strea
         val selectionPlan = if (fixedQuality || manifestFallbackUsed) p.copy(hls = null, dash = null) else p
         val selection = (if (emulatorProfile) VariantSelector.emulatorAvcSelection(selectionPlan, height, ::supported) else null)
             ?: VariantSelector.select(selectionPlan, height, separate, ::supported)
-        if (emulatorProfile) android.util.Log.i("QuietScreenAudio", "selection emulatorAvc=${selection is PlaybackSelection.Separate && decoderMimeType(selection.video) == MimeTypes.VIDEO_H264} requestedHeight=$height")
+        if (emulatorProfile) android.util.Log.i("AprionTVAudio", "selection emulatorAvc=${selection is PlaybackSelection.Separate && decoderMimeType(selection.video) == MimeTypes.VIDEO_H264} requestedHeight=$height")
         val available = p.captions.filter(::supportedCaption)
         val caption = if (captionOff || nativeCaption) null else {
             available.firstOrNull { it.language == selectedCaptionLanguage && it.format == selectedCaptionFormat }

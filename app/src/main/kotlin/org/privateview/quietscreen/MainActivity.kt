@@ -16,6 +16,7 @@ import org.privateview.quietscreen.extractor.NewPipeCatalog
 import org.privateview.quietscreen.presentation.SearchViewModel
 import org.privateview.quietscreen.presentation.BrowseViewModel
 import org.privateview.quietscreen.core.Genre
+import org.privateview.quietscreen.core.GenreClassifier
 import org.privateview.quietscreen.ui.*
 import org.privateview.quietscreen.updates.UpdateManager
 
@@ -32,7 +33,6 @@ class MainActivity : ComponentActivity() {
     private var screen by mutableStateOf(Screen.HOME)
     private var selected by mutableStateOf<VideoSummary?>(null)
     private var homeFocus by mutableStateOf("home")
-    private var playerOrigin = Screen.SEARCH
     private var selectedGenre: Genre? = null
     private lateinit var updates: UpdateManager
 
@@ -50,7 +50,7 @@ class MainActivity : ComponentActivity() {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = BrowseViewModel(NewPipeCatalog()) as T
         })[BrowseViewModel::class.java]
-        browseModel.arrange(personalization.profile(), personalization.enabled)
+        browseModel.arrange(personalization.profile(), personalization.enabled, continuing.finished())
         browseModel.continueWatching(continuing.videos())
         setContent {
             MaterialTheme {
@@ -65,29 +65,41 @@ class MainActivity : ComponentActivity() {
                             search = { homeFocus = "search"; screen = Screen.SEARCH }, settings = { homeFocus = "settings"; screen = Screen.SETTINGS },
                             about = { homeFocus = "about"; screen = Screen.ABOUT }, exit = { finish() },
                             play = { video, genre ->
-                                homeFocus = "home"; browseModel.cancel(); playerOrigin = Screen.HOME
-                                selectedGenre = genre ?: continuing.genre(video.id)
-                                startPositionMs = if (genre == null) continuing.position(video.id) else 0
+                                homeFocus = "home"; browseModel.cancel()
+                                selectedGenre = genre ?: continuing.genre(video.id) ?: GenreClassifier.classify(video)
+                                startPositionMs = if (browseModel.focus?.rowKey == "continue") continuing.position(video.id) else 0
                                 selected = video; screen = Screen.PLAYER
                             })
-                        Screen.SEARCH -> SearchScreen(searchModel, home = { searchModel.cancel(); screen = Screen.HOME }) {
-                            searchModel.cancel(); playerOrigin = Screen.SEARCH; selectedGenre = null; startPositionMs = 0
+                        Screen.SEARCH -> SearchScreen(searchModel, home = {
+                            searchModel.cancel(); browseModel.arrange(personalization.profile(), personalization.enabled, continuing.finished())
+                            browseModel.continueWatching(continuing.videos()); screen = Screen.HOME
+                        }) {
+                            searchModel.cancel(); selectedGenre = GenreClassifier.classify(it); startPositionMs = 0
                             selected = it; screen = Screen.PLAYER
                         }
                         Screen.SETTINGS -> SettingsScreen(settings, updates, personalization,
                             clearSession = { searchModel.clear(); continuing.clear(); browseModel.clear(); ThumbnailLoader.clear() }) {
-                            browseModel.arrange(personalization.profile(), personalization.enabled); screen = Screen.HOME
+                            browseModel.arrange(personalization.profile(), personalization.enabled, continuing.finished()); screen = Screen.HOME
                         }
                         Screen.ABOUT -> AboutScreen { screen = Screen.HOME }
                         Screen.PLAYER -> selected?.let { video ->
                             val genre = selectedGenre
+                            key(video.id.value) {
                             PlayerScreen(video, catalog, settings,
-                                watched = { time, duration -> personalization.record(genre, time, duration) }, startPositionMs = startPositionMs,
-                                progress = { position, duration, ended ->
-                                    continuing.record(video, position, duration, ended, genre)
+                                watched = { time, duration, detected ->
+                                    personalization.record(detected ?: genre, time, duration)
+                                    browseModel.arrange(personalization.profile(), personalization.enabled, continuing.finished())
+                                }, startPositionMs = startPositionMs,
+                                progress = { position, duration, ended, detected ->
+                                    continuing.record(video, position, duration, ended, detected ?: genre)
                                     browseModel.continueWatching(continuing.videos())
+                                }, recommendations = browseModel,
+                                playNext = { next, nextGenre ->
+                                    browseModel.cancel(); selectedGenre = nextGenre ?: GenreClassifier.classify(next)
+                                    startPositionMs = 0; selected = next
                                 }) {
-                                selected = null; screen = playerOrigin
+                                selected = null; screen = Screen.HOME
+                            }
                             }
                         }
                     }
@@ -105,7 +117,7 @@ class MainActivity : ComponentActivity() {
         if (::updates.isInitialized) updates.leaveForeground()
         // The player's ON_STOP observer releases synchronously. Do not auto-resume
         // a selected video when returning from Home/sleep/another app.
-        if (screen == Screen.PLAYER) { selected = null; screen = playerOrigin }
+        if (screen == Screen.PLAYER) { selected = null; screen = Screen.HOME }
         if (::searchModel.isInitialized) searchModel.cancel()
         if (::browseModel.isInitialized) browseModel.cancel()
         ThumbnailLoader.cancelPending()

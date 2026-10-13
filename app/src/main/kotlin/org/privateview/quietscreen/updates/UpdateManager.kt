@@ -68,7 +68,7 @@ class UpdateManager private constructor(private val context: Context) {
         if (!foreground || job?.isCompleted == false || installing) return
         if (!configured) { mutable.value = mutable.value.copy(message = "This development build has no public update location."); return }
         if (context.packageName != "org.privateview.quietscreen") {
-            mutable.value = mutable.value.copy(message = "This test build has no production update feed. Install the official QuietScreen APK for signed updates.",
+            mutable.value = mutable.value.copy(message = "This test build has no production update feed. Install the official Aprion TV APK for signed updates.",
                 detail = detail("QS-U-TEST-BUILD"), busy = false, ready = false)
             return
         }
@@ -156,7 +156,7 @@ class UpdateManager private constructor(private val context: Context) {
             return
         }
         if (!context.packageManager.canRequestPackageInstalls()) {
-            mutable.value = mutable.value.copy(message = "Allow updates from QuietScreen in Android settings, then return here.")
+            mutable.value = mutable.value.copy(message = "Allow updates from Aprion TV in Android settings, then return here.")
             try { context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             catch (_: Exception) { failed(UpdateFailure(UpdateProblem.INSTALL_PERMISSION), UpdateStep.INSTALL) }
             return
@@ -211,7 +211,7 @@ class UpdateManager private constructor(private val context: Context) {
                 mutable.value = mutable.value.copy(message = "Android requires approval to install the update.", busy = false, ready = true)
                 if (foreground && next != null) install()
             }
-            PackageInstaller.STATUS_SUCCESS -> { installing = false; apk.delete(); envelope.delete(); mutable.value = mutable.value.copy(message = "Update installed. Reopen QuietScreen.", busy = false, ready = false) }
+            PackageInstaller.STATUS_SUCCESS -> { installing = false; apk.delete(); envelope.delete(); mutable.value = mutable.value.copy(message = "Update installed. Reopen Aprion TV.", busy = false, ready = false) }
             else -> {
                 installing = false; confirmation = null
                 val reason = when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {

@@ -35,5 +35,5 @@ internal class PlaybackDiagnostics : AnalyticsListener {
         val runtime = Runtime.getRuntime()
         Log.i(TAG, "sample position=${player.currentPosition} bufferedMs=${player.totalBufferedDuration} state=${player.playbackState} playing=${player.isPlaying} suppression=${player.playbackSuppressionReason} audioRate=${audio?.sampleRate ?: 0} audioChannels=${audio?.channelCount ?: 0} videoMime=${video?.sampleMimeType} height=${video?.height ?: 0} fps=${video?.frameRate ?: 0f} heapMiB=${(runtime.totalMemory()-runtime.freeMemory())/1048576}")
     }
-    companion object { private const val TAG = "QuietScreenAudio" }
+    companion object { private const val TAG = "AprionTVAudio" }
 }

@@ -1,4 +1,4 @@
-# QuietScreen notices
+# Aprion TV notices
 
 This project uses NewPipeExtractor and is provided under GPL-3.0-or-later. The GPL text is in LICENSE. NewPipeExtractor copyright belongs to its contributors; the exact source snapshot, local build and JavaScript-denial modification are recorded in third_party/README.md. Preserve notices and provide corresponding source with distributions.
 

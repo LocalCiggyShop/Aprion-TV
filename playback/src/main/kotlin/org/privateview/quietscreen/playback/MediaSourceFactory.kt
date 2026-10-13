@@ -19,7 +19,7 @@ import org.privateview.quietscreen.extractor.NetworkRole
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class MediaSourceFactory {
-    private val data = OkHttpDataSource.Factory(NetworkPolicy.client(NetworkRole.MEDIA)).setUserAgent("QuietScreen/0.1")
+    private val data = OkHttpDataSource.Factory(NetworkPolicy.client(NetworkRole.MEDIA)).setUserAgent("AprionTV/0.1")
     private val manifestData = BoundedDataSource.Factory(data, 8L * 1024 * 1024)
     private fun item(e: MediaEndpoint, mime: String): MediaItem {
         NetworkPolicy.validate(e.url, NetworkRole.MEDIA)

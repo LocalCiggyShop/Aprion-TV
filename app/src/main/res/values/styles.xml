@@ -1,4 +1,4 @@
-<resources><style name="Theme.QuietScreen" parent="android:style/Theme.Material.NoActionBar">
+<resources><style name="Theme.AprionTV" parent="android:style/Theme.Material.NoActionBar">
     <item name="android:windowActionModeOverlay">true</item>
     <item name="android:windowLightStatusBar">false</item>
     <item name="android:fontFamily">sans</item>

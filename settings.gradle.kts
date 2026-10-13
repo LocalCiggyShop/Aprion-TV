@@ -12,6 +12,6 @@ dependencyResolutionManagement {
         }
     }
 }
-rootProject.name = "QuietScreen"
+rootProject.name = "Aprion TV"
 include(":app", ":core", ":extractor", ":playback", ":trial-probe")
 include(":updater-fixture")

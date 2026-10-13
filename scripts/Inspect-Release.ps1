@@ -1,7 +1,10 @@
 param([Parameter(Mandatory)][ValidatePattern('^[A-Fa-f0-9]{64}$')][string]$CertificateSha256,
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')][string]$Tag='v0.3.0-beta')
 . "$PSScriptRoot/Env.ps1"
-$taskApk=(Get-Item -LiteralPath (Join-Path $taskRoot "dist/$Tag/QuietScreen.apk")).FullName
+$taskArtifact = Join-Path $taskRoot "dist/$Tag/Aprion-TV.apk"
+# Older distributed assets retain their original filename and signature.
+if (-not (Test-Path -LiteralPath $taskArtifact)) { $taskArtifact = Join-Path $taskRoot "dist/$Tag/QuietScreen.apk" }
+$taskApk=(Get-Item -LiteralPath $taskArtifact).FullName
 $taskHash=(Get-FileHash -LiteralPath $taskApk).Hash
 $taskTools=Get-ChildItem "$env:ANDROID_HOME/build-tools" -Directory | Sort-Object Name -Descending | Select-Object -First 1
 $taskSignature=& "$taskTools/apksigner.bat" verify --verbose --print-certs $taskApk

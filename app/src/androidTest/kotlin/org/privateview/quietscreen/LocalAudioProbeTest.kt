@@ -69,7 +69,7 @@ class LocalAudioProbeTest {
         }
         try {
             awaitPlaying()
-            Log.i("QuietScreenProbe", "START rate=$rate seconds=$seconds compressed=$compressed amplitude=0.25 stereo left=440Hz right=660Hz")
+            Log.i("AprionTVProbe", "START rate=$rate seconds=$seconds compressed=$compressed amplitude=0.25 stereo left=440Hz right=660Hz")
             var previous = -1L
             var stalled = 0
             repeat(seconds) { elapsed ->
@@ -81,7 +81,7 @@ class LocalAudioProbeTest {
                     stalled = if (position <= previous) stalled + 1 else 0
                     assertTrue("Local PCM position stalled for five seconds", stalled < 5)
                     previous = position
-                    if (elapsed % 15 == 0) Log.i("QuietScreenProbe", "SAMPLE position=$position playing=${controller.player.isPlaying} suppression=${controller.player.playbackSuppressionReason} rate=${controller.player.audioFormat?.sampleRate}")
+                    if (elapsed % 15 == 0) Log.i("AprionTVProbe", "SAMPLE position=$position playing=${controller.player.isPlaying} suppression=${controller.player.playbackSuppressionReason} rate=${controller.player.audioFormat?.sampleRate}")
                 }
             }
             // Exercise the same real sink after sustained playback, without recreating it.
@@ -108,7 +108,7 @@ class LocalAudioProbeTest {
                 instrument.runOnMainSync { assertNull(controller.player.playerError); ended = controller.player.playbackState == Player.STATE_ENDED }
             }
             assertTrue("PCM did not reach natural end", ended)
-            Log.i("QuietScreenProbe", "COMPLETE seconds=$seconds rate=$rate compressed=$compressed controls=true end=true audibleQuality=UNVERIFIED")
+            Log.i("AprionTVProbe", "COMPLETE seconds=$seconds rate=$rate compressed=$compressed controls=true end=true audibleQuality=UNVERIFIED")
         } finally {
             instrument.runOnMainSync { controller.release(); scope.cancel() }
             fixture.delete()

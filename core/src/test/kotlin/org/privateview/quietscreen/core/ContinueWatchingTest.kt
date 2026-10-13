@@ -19,12 +19,24 @@ class ContinueWatchingTest {
         assertEquals(100, state.finished.size)
         assertTrue(state.videos.isEmpty())
     }
-    @Test fun rejectsUnstartedLiveInvalidAndUnknownDurationWithoutAssumingEarlyCompletion() {
+    @Test fun briefWatchesUseSummaryDurationWithoutAssumingEarlyCompletion() {
         val state = ContinueWatchingState()
-        assertEquals(state, state.record(video(0), 4_999, 120_000, false, null))
+        assertEquals(state, state.record(video(0), 999, 120_000, false, null))
+        assertEquals(1_000, state.record(video(0), 1_000, 120_000, false, null).videos.single().positionMs)
         assertEquals(state, state.record(video(0).copy(live = true), 10_000, 120_000, false, null))
-        assertEquals(state, state.record(video(0), 10_000, 0, false, null))
+        assertEquals(120_000, state.record(video(0), 10_000, 0, false, null).videos.single().durationMs)
+        assertEquals(state, state.record(video(0).copy(durationSeconds = null), 10_000, 0, false, null))
+        assertEquals(state, state.record(video(0).copy(durationSeconds = Long.MAX_VALUE), 10_000, 0, false, null))
         assertEquals(state, state.record(video(0), 10_000, Long.MAX_VALUE, false, null))
         assertEquals(1, state.record(video(0), 119_000, 120_000, false, null).videos.size)
+    }
+    @Test fun actualEndRemovesUnknownDurationRecordAndPreventsReplay() {
+        val item = video(1)
+        val partial = ContinueWatchingState().record(item, 100_000, 120_000, false, null)
+        assertEquals(1, partial.videos.size)
+        val ended = partial.record(item.copy(durationSeconds = null), 0, 0, true, null)
+        assertTrue(ended.videos.isEmpty())
+        assertEquals(listOf(item.id.value), ended.finished)
+        assertEquals(ended, ended.record(item, 2_000, 120_000, false, null))
     }
 }

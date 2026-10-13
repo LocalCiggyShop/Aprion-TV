@@ -49,11 +49,11 @@ class NewPipeCatalog : VideoCatalog, StreamResolver {
             catch (e: Exception) {
                 // Explicit local opt-in; never include exception messages, video
                 // identifiers, queries, request URLs, response bodies or cookies.
-                if (android.util.Log.isLoggable("QuietScreenExtractor", android.util.Log.DEBUG)) {
+                if (android.util.Log.isLoggable("AprionTVExtractor", android.util.Log.DEBUG)) {
                     var cause: Throwable? = e
                     repeat(5) {
                         cause?.let { failure ->
-                            android.util.Log.d("QuietScreenExtractor", "failureType=${failure.javaClass.name} frames=" +
+                            android.util.Log.d("AprionTVExtractor", "failureType=${failure.javaClass.name} frames=" +
                                 failure.stackTrace.take(6).joinToString("|") { frame -> "${frame.className}.${frame.methodName}:${frame.lineNumber}" })
                         }
                         cause = cause?.cause
@@ -124,7 +124,8 @@ class NewPipeCatalog : VideoCatalog, StreamResolver {
         val captions = runCatching { e.subtitlesDefault }.getOrDefault(emptyList()).take(30).mapNotNull { c ->
             runCatching { NetworkPolicy.validate(c.content, NetworkRole.METADATA); CaptionTrack(c.languageTag.take(64), c.format?.mimeType.orEmpty().take(100), MediaEndpoint(c.content)) }.getOrNull()
         }
-        PlaybackPlan(id, e.name.take(500), e.length.coerceAtLeast(0) * 1000, System.currentTimeMillis(), videos, audio, hls, dash, captions)
+        PlaybackPlan(id, e.name.take(500), e.length.coerceAtLeast(0) * 1000, System.currentTimeMillis(), videos, audio, hls, dash, captions,
+            genre = runCatching { GenreClassifier.providerCategory(e.category) }.getOrNull())
     }
 
     companion object { private val mutex = Mutex() }

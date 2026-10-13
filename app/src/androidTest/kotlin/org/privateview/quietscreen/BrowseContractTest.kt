@@ -48,6 +48,67 @@ class BrowseContractTest {
     private fun focused() = nodes().filter { it.isFocused }.joinToString(" ") { label(it) }
     private fun key(code: Int) { instrument.sendKeyDownUpSync(code); Thread.sleep(200) }
 
+    @Test fun recommendedUsesPrivateSearchLearningImmediatelyReusesBoundedCatalogAndResets() {
+        var requests = 0
+        var active = 0
+        var maximumActive = 0
+        val catalog = object : VideoCatalog {
+            override suspend fun search(query: String, cursor: String?): CatalogPage {
+                requests++; active++; maximumActive = maxOf(maximumActive, active)
+                try {
+                    delay(20)
+                    val genre = Genre.entries.first { it.query == query }
+                    return CatalogPage((0..39).map { video(genre.ordinal * 100 + it) }, null)
+                } finally { active-- }
+            }
+            override fun cancelPending() {}
+        }
+        lateinit var model: BrowseViewModel
+        onMain { model = BrowseViewModel(catalog); model.loadRow("recommended") }
+        try {
+            await { model.rows.value.first().loaded && !model.rows.value.first().busy }
+            assertEquals("Recommended", model.rows.value.first().label)
+            assertEquals(4, requests)
+            assertEquals(1, maximumActive)
+            assertEquals(4, model.rows.value.first().origins.values.toSet().size)
+            onMain { Genre.entries.forEach { model.load(it) } }
+            await { model.rows.value.filter { it.genre != null }.all { it.loaded && !it.busy } }
+            assertEquals(8, requests)
+            val profile = GenrePreferences().watched(requireNotNull(GenreClassifier.classify(
+                video(900).copy(title = "Minecraft gameplay"))), 120_000, 120_000)
+            onMain { model.arrange(profile, true); model.loadRow("recommended") }
+            val row = model.rows.value.first()
+            assertTrue(row.learned)
+            assertEquals(18, row.videos.count { row.origins[it.id.value] == Genre.GAMING })
+            assertEquals(8, requests)
+            val pinned = row.videos[2]
+            onMain {
+                model.focus = BrowseFocus(null, pinned.id.value, column = 2, rowKey = "recommended")
+                model.arrange(GenrePreferences(mapOf(Genre.MUSIC to 100.0)), true)
+            }
+            assertEquals(pinned.id, model.rows.value.first().videos[2].id)
+            onMain { model.focus = null; model.arrange(profile, false) }
+            assertFalse(model.rows.value.first().learned)
+            assertEquals(Genre.entries.toSet(), model.rows.value.first().origins.values.toSet())
+            val store = ContinueWatching(instrument.targetContext)
+            val prefs = instrument.targetContext.getSharedPreferences("continue_watching", 0)
+            val original = prefs.getString("records", null)
+            try {
+                store.clear()
+                store.record(video(900), 1_500, 0, false, null)
+                assertEquals(1_500, ContinueWatching(instrument.targetContext).position(video(900).id))
+                onMain { model.continueWatching(store.videos()) }
+                assertEquals("Continue watching", model.rows.value[1].label)
+                store.record(video(900), 0, 0, true, null)
+                assertTrue(ContinueWatching(instrument.targetContext).videos().isEmpty())
+                onMain { model.continueWatching(store.videos()); model.arrange(GenrePreferences(), true, store.finished()) }
+                assertEquals(9, model.rows.value.size)
+            } finally {
+                prefs.edit().clear().apply { if (original != null) putString("records", original) }.commit()
+            }
+        } finally { onMain { model.cancel() } }
+    }
+
     @Test fun continueWatchingPrivatePersistenceSecondRowAndCompletionRemoval() {
         val prefs = instrument.targetContext.getSharedPreferences("continue_watching", 0)
         val original = prefs.getString("records", null)
@@ -87,9 +148,9 @@ class BrowseContractTest {
             reopened.record(video(1), 35_000, 120_000, false, Genre.MUSIC)
             assertTrue(ContinueWatching(instrument.targetContext).videos().isEmpty())
             onMain { model.continueWatching(reopened.videos()) }
-            assertEquals(8, model.rows.value.size)
-            assertTrue(model.rows.value.none { it.genre == null })
-            assertNotNull(model.focus?.genre)
+            assertEquals(9, model.rows.value.size)
+            assertTrue(model.rows.value.none { it.key == "continue" })
+            assertEquals("recommended", model.focus?.rowKey)
             prefs.edit().putString("records", "broken json").commit()
             assertTrue(ContinueWatching(instrument.targetContext).videos().isEmpty())
             reopened.clear()
@@ -115,16 +176,16 @@ class BrowseContractTest {
         }
         lateinit var model: BrowseViewModel
         onMain { model = BrowseViewModel(fake); model.load(Genre.SCIENCE) }
-        await { model.rows.value.first().loaded }
+        await { model.rows.value.first { it.genre == Genre.SCIENCE }.loaded }
         onMain { model.load(Genre.SCIENCE, more = true) }
-        await { model.rows.value.first().error != null }
-        assertEquals(50, model.rows.value.first().videos.size)
-        assertEquals("next", model.rows.value.first().cursor)
+        await { model.rows.value.first { it.genre == Genre.SCIENCE }.error != null }
+        assertEquals(50, model.rows.value.first { it.genre == Genre.SCIENCE }.videos.size)
+        assertEquals("next", model.rows.value.first { it.genre == Genre.SCIENCE }.cursor)
         failMore = false
         onMain { model.load(Genre.SCIENCE, more = true) }
-        await { model.rows.value.first().videos.size == 60 }
-        assertNull(model.rows.value.first().cursor)
-        assertEquals(60, model.rows.value.first().videos.distinctBy { it.id }.size)
+        await { model.rows.value.first { it.genre == Genre.SCIENCE }.videos.size == 60 }
+        assertNull(model.rows.value.first { it.genre == Genre.SCIENCE }.cursor)
+        assertEquals(60, model.rows.value.first { it.genre == Genre.SCIENCE }.videos.distinctBy { it.id }.size)
         onMain { model.load(Genre.MUSIC) }
         await { model.rows.value.first { it.genre == Genre.MUSIC }.videos.size == 50 }
         onMain { model.load(Genre.MUSIC, more = true) }
@@ -151,7 +212,7 @@ class BrowseContractTest {
             profile.enabled = false; profile.record(Genre.SCIENCE, 900_000, 900_000)
             assertEquals(before, profile.profile().scores)
             onMain { model.arrange(profile.profile(), false) }
-            assertEquals(Genre.entries, model.rows.value.map { it.genre })
+            assertEquals(Genre.entries, model.rows.value.mapNotNull { it.genre })
             profile.reset()
             assertFalse(profile.profile().personalized)
             assertFalse(profile.enabled)
@@ -187,9 +248,11 @@ class BrowseContractTest {
                     }
                 }
             }
-            await { model.rows.value.first().videos.size == 6 && focused().contains("Home") }
+            await { model.rows.value.first { it.genre == Genre.SCIENCE }.videos.size == 6 && focused().contains("Home") }
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
             await { focused().contains("Fixture video 0") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await { model.focus?.genre == Genre.SCIENCE }
             for (index in 1..5) {
                 key(KeyEvent.KEYCODE_DPAD_RIGHT)
                 await { focused().contains("Fixture video $index") }
@@ -203,7 +266,7 @@ class BrowseContractTest {
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
             await { focused().contains("More videos") }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await { model.rows.value.first().videos.size == 10 }
+            await { model.rows.value.first { it.genre == Genre.SCIENCE }.videos.size == 10 }
             key(KeyEvent.KEYCODE_DPAD_LEFT)
             await { focused().contains("Fixture video 9") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)

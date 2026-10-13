@@ -1,4 +1,4 @@
-# Building QuietScreen
+# Building Aprion TV
 
 Use Windows PowerShell 7, JDK 21 and Android SDK platform 37/build tools. The Gradle wrapper, dependency locks and verification metadata pin reviewed versions. Do not blindly regenerate dependency checksums.
 

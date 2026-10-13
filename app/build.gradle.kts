@@ -17,24 +17,24 @@ android {
         applicationId = "org.privateview.quietscreen"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.3.3-beta"
+        versionCode = 8
+        versionName = "0.3.4-beta"
         buildConfigField("String", "UPDATE_OWNER", "\"$updateOwner\"")
         buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
         buildConfigField("String", "UPDATE_BRANCH", "\"$updateBranch\"")
-        manifestPlaceholders["appLabel"] = "QuietScreen"
+        manifestPlaceholders["appLabel"] = "Aprion TV"
         testInstrumentationRunner = if (providers.gradleProperty("nativeTrialProbe").orElse("false").get().toBoolean())
             "org.privateview.quietscreen.TrialNativeInstrumentation" else "androidx.test.runner.AndroidJUnitRunner"
         testProguardFiles("test-proguard-rules.pro")
     }
     buildTypes {
-        debug { applicationIdSuffix = ".debug"; versionNameSuffix = "-debug"; manifestPlaceholders["appLabel"] = "QuietScreen Dev" }
+        debug { applicationIdSuffix = ".debug"; versionNameSuffix = "-debug"; manifestPlaceholders["appLabel"] = "Aprion TV Dev" }
         release { isMinifyEnabled = true; isShrinkResources = true; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro") }
         create("trial") {
             initWith(getByName("release"))
             applicationIdSuffix = ".trial"
             versionNameSuffix = "-trial"
-            manifestPlaceholders["appLabel"] = "QuietScreen TV Trial"
+            manifestPlaceholders["appLabel"] = "Aprion TV Trial"
             signingConfig = signingConfigs.getByName("debug")
             isDebuggable = false
             matchingFallbacks += "release"

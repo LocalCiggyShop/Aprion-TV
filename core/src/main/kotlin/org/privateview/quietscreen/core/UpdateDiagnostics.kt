@@ -26,7 +26,7 @@ enum class UpdateProblem(val advice: String) {
     SIGNER("The APK was not signed by the installed app's key. Use the official release."),
     ARCHIVE("Android could not read the downloaded APK. Retry or use the official release."),
     STORAGE("The update could not be saved. Free space on the TV and retry."),
-    INSTALL_PERMISSION("Allow installation from QuietScreen in Android settings, then retry."),
+    INSTALL_PERMISSION("Allow installation from Aprion TV in Android settings, then retry."),
     INSTALL_ABORTED("Installation was cancelled. Choose Install update to try again."),
     INSTALL_BLOCKED("Android blocked installation. Check installation permission and device restrictions."),
     INSTALL_INCOMPATIBLE("Android reports this update is incompatible with the device."),

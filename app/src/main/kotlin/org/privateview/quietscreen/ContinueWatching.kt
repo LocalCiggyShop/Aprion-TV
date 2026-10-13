@@ -9,13 +9,14 @@ class ContinueWatching(context: Context) {
     private val prefs = context.getSharedPreferences("continue_watching", Context.MODE_PRIVATE)
     private var state = read()
     fun videos() = state.videos
+    fun finished() = state.finished
     fun position(id: VideoId) = state.videos.firstOrNull { it.video.id == id }?.positionMs ?: 0L
     fun genre(id: VideoId) = state.videos.firstOrNull { it.video.id == id }?.genre
     fun clear() { state = ContinueWatchingState(); prefs.edit().clear().apply() }
     fun record(video: VideoSummary, position: Long, duration: Long, ended: Boolean, genre: Genre?) {
         // Do not store URLs: thumbnails are reconstructed from validated public IDs.
         val safe = video.copy(title = video.title.take(200), channel = video.channel.take(120), thumbnail = null,
-            durationSeconds = duration.takeIf { it > 0 }?.div(1000))
+            durationSeconds = duration.takeIf { it > 0 }?.div(1000) ?: video.durationSeconds)
         val next = state.record(safe, position, duration, ended, genre)
         if (next == state) return
         state = next
@@ -38,7 +39,7 @@ class ContinueWatching(context: Context) {
             val item = list.getJSONObject(index)
             val id = VideoId(item.getString("id"))
             val duration = item.getLong("duration"); val position = item.getLong("position")
-            require(duration in 1..ContinueWatchingState.MAX_DURATION_MS && position in 5_000 until duration && id.value !in finished)
+            require(duration in 1..ContinueWatchingState.MAX_DURATION_MS && position in 1_000 until duration && id.value !in finished)
             UnfinishedVideo(VideoSummary(id, item.getString("title").take(200), item.getString("channel").take(120), null,
                 duration / 1000), position, duration, Genre.entries.firstOrNull { it.name == item.optString("genre") })
         }.getOrNull() }.distinctBy { it.video.id }

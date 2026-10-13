@@ -38,7 +38,7 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
     val cancelFocus = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val rowFocus = remember { mutableMapOf<Genre?, suspend (BrowseFocus) -> Boolean>() }
+    val rowFocus = remember { mutableMapOf<String, suspend (BrowseFocus) -> Boolean>() }
     val restored = remember { model.focus.takeIf { initialFocus == "home" } }
     val navigation = remember { NavigationQueue() }
     fun cancelNavigation() { navigation.pending = null; navigation.job?.cancel() }
@@ -52,15 +52,15 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
                 navigation.pending = null
                 if (next == previous) continue
                 previous = next
-                val index = rows.indexOfFirst { it.genre == next.genre }
+                val index = rows.indexOfFirst { it.key == next.rowKey }
                 if (index >= 0) {
                     val visible = column.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
-                    if (visible == null || visible.offset < 0 || visible.offset + visible.size > column.layoutInfo.viewportEndOffset - column.layoutInfo.afterContentPadding || rowFocus[next.genre] == null) {
+                    if (visible == null || visible.offset < 0 || visible.offset + visible.size > column.layoutInfo.viewportEndOffset - column.layoutInfo.afterContentPadding || rowFocus[next.rowKey] == null) {
                         column.scrollToItem(index)
                         // Composition attaches requesters after a lazy row enters the viewport.
                         repeat(3) { withFrameNanos { } }
                     }
-                    if (rowFocus[next.genre]?.invoke(next) != true) rail.requestFocus()
+                    if (rowFocus[next.rowKey]?.invoke(next) != true) rail.requestFocus()
                 }
             }
         }
@@ -83,7 +83,7 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
     Row(Modifier.fillMaxSize()) {
         Column(Modifier.width(176.dp).fillMaxHeight().background(Panel.copy(alpha = .45f))
             .padding(start = 20.dp, end = 16.dp, top = 30.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("QUIET\nSCREEN", color = Mint, fontSize = 17.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, lineHeight = 21.sp)
+            Text("APRION TV", color = Mint, fontSize = 17.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, lineHeight = 21.sp)
             Spacer(Modifier.height(16.dp))
             listOf("home" to "Home", "search" to "Search videos", "settings" to "Settings", "about" to "About").forEach { (id, label) ->
                 TvAction(label, Modifier.fillMaxWidth()
@@ -92,11 +92,11 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
                     .then(if (id == initialFocus) Modifier.focusRequester(initialRail) else Modifier)
                     .onPreviewKeyEvent {
                         if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionRight) {
-                            navigate(model.focus ?: BrowseFocus(rows.first().genre)); true
+                            navigate(model.focus ?: BrowseFocus(rows.first().genre, rowKey = rows.first().key)); true
                         } else false
                     }) {
                     when (id) {
-                        "home" -> navigate(model.focus ?: BrowseFocus(rows.first().genre))
+                        "home" -> navigate(model.focus ?: BrowseFocus(rows.first().genre, rowKey = rows.first().key))
                         "search" -> search()
                         "settings" -> settings()
                         else -> about()
@@ -111,7 +111,7 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
                 verticalAlignment = Alignment.CenterVertically) {
                 Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text("Find your next watch", color = Cloud, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                    Text(if (model.personalized) "Your favourite genres first · Plenty more to explore" else "A little of everything · Choose something you love",
+                    Text(if (model.personalized) "Recommendations shaped by what you watch" else "A little of everything · Choose something you love",
                         color = Muted, fontSize = 13.sp)
                 }
                 if (rows.any { it.busy }) TvAction("Cancel", Modifier.focusRequester(cancelFocus)
@@ -126,7 +126,7 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
                         val adjacent = rows.getOrNull(index + direction)
                         if (adjacent != null) {
                             val id = adjacent.videos.getOrNull(videoIndex.coerceAtMost((adjacent.videos.size - 1).coerceAtLeast(0)))?.id?.value
-                            navigate(BrowseFocus(adjacent.genre, id, column = videoIndex))
+                            navigate(BrowseFocus(adjacent.genre, id, column = videoIndex, rowKey = adjacent.key))
                         } else if (direction < 0) {
                             if (rows.any { it.busy }) cancelFocus.requestFocus() else rail.requestFocus()
                         }
@@ -141,21 +141,21 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
 
 @Composable
 private fun BrowseShelf(row: BrowseRow, model: BrowseViewModel,
-    focusers: MutableMap<Genre?, suspend (BrowseFocus) -> Boolean>, rail: FocusRequester,
+    focusers: MutableMap<String, suspend (BrowseFocus) -> Boolean>, rail: FocusRequester,
     navigate: (BrowseFocus) -> Unit, onVertical: (Int, Int) -> Unit, play: (VideoSummary, Genre?) -> Unit) {
-    val saved = model.horizontal[row.genre] ?: ScrollPosition()
+    val saved = model.horizontal[row.key] ?: ScrollPosition()
     val list = rememberLazyListState(saved.index, saved.offset)
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     val action = remember { FocusRequester() }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(row.genre, lifecycle) {
-        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { model.load(row.genre) }
+    LaunchedEffect(row.key, row.loaded, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { model.loadRow(row.key) }
     }
     val currentRow by rememberUpdatedState(row)
     var pendingCard by remember { mutableStateOf(false) }
     var desiredColumn by remember { mutableIntStateOf(0) }
-    DisposableEffect(row.genre) {
-        focusers[row.genre] = { target ->
+    DisposableEffect(row.key) {
+        focusers[row.key] = { target ->
             desiredColumn = target.column
             pendingCard = !target.action && currentRow.videos.isEmpty()
             var acquired = false
@@ -178,13 +178,13 @@ private fun BrowseShelf(row: BrowseRow, model: BrowseViewModel,
             acquired
         }
         onDispose {
-            model.horizontal[row.genre] = ScrollPosition(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset)
-            focusers.remove(row.genre)
+            model.horizontal[row.key] = ScrollPosition(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset)
+            focusers.remove(row.key)
         }
     }
     LaunchedEffect(row.videos.size) {
         val focused = model.focus
-        if (row.videos.isNotEmpty() && model.contentFocused && focused != null && focused.genre == row.genre && focused.action) {
+        if (row.videos.isNotEmpty() && model.contentFocused && focused != null && focused.rowKey == row.key && focused.action) {
             if (pendingCard) {
                 pendingCard = false
                 val index = desiredColumn.coerceIn(0, row.videos.lastIndex)
@@ -210,16 +210,16 @@ private fun BrowseShelf(row: BrowseRow, model: BrowseViewModel,
                 val focus = remember(video.id) { FocusRequester() }
                 DisposableEffect(video.id) { requesters[video.id.value] = focus; onDispose { requesters.remove(video.id.value) } }
                 VideoCard(video, Modifier.focusRequester(focus).onFocusChanged {
-                    if (it.isFocused) { model.contentFocused = true; pendingCard = false; desiredColumn = index; model.focus = BrowseFocus(row.genre, video.id.value, column = index) }
+                    if (it.isFocused) { model.contentFocused = true; pendingCard = false; desiredColumn = index; model.focus = BrowseFocus(row.genre, video.id.value, column = index, rowKey = row.key) }
                 }.onPreviewKeyEvent {
                     if (it.type != KeyEventType.KeyDown) false else when (it.key) {
                         Key.DirectionLeft -> {
-                            if (index == 0) rail.requestFocus() else navigate(BrowseFocus(row.genre, row.videos[index - 1].id.value, column = index - 1))
+                            if (index == 0) rail.requestFocus() else navigate(BrowseFocus(row.genre, row.videos[index - 1].id.value, column = index - 1, rowKey = row.key))
                             true
                         }
                         Key.DirectionRight -> {
                             val next = row.videos.getOrNull(index + 1)
-                            if (next != null || row.genre != null) navigate(BrowseFocus(row.genre, next?.id?.value, action = next == null, column = index + 1))
+                            if (next != null || row.canLoad) navigate(BrowseFocus(row.genre, next?.id?.value, action = next == null, column = index + 1, rowKey = row.key))
                             true
                         }
                         Key.DirectionUp -> { onVertical(-1, index); true }
@@ -227,12 +227,12 @@ private fun BrowseShelf(row: BrowseRow, model: BrowseViewModel,
                         else -> false
                     }
                 }, resumeMs = row.resumes[video.id.value]) {
-                    model.focus = BrowseFocus(row.genre, video.id.value, column = index)
-                    model.horizontal[row.genre] = ScrollPosition(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset)
-                    play(video, row.genre)
+                    model.focus = BrowseFocus(row.genre, video.id.value, column = index, rowKey = row.key)
+                    model.horizontal[row.key] = ScrollPosition(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset)
+                    play(video, row.genre ?: row.origins[video.id.value])
                 }
             }
-            if (row.genre != null) item(key = "action") {
+            if (row.canLoad) item(key = "action") {
                 DisposableEffect(action) { requesters["action"] = action; onDispose { requesters.remove("action") } }
                 Column(Modifier.width(224.dp).height(205.dp).background(Panel, RoundedCornerShape(12.dp)).padding(16.dp),
                     verticalArrangement = Arrangement.Center) {
@@ -246,13 +246,13 @@ private fun BrowseShelf(row: BrowseRow, model: BrowseViewModel,
                     Spacer(Modifier.height(12.dp))
                     TvAction(when { row.busy -> "Cancel loading"; row.error != null -> "Try again"; row.cursor != null -> "More videos"; else -> "Refresh row" },
                         Modifier.focusRequester(action).onFocusChanged {
-                            if (it.isFocused) { model.contentFocused = true; model.focus = BrowseFocus(row.genre, action = true, column = desiredColumn) }
+                            if (it.isFocused) { model.contentFocused = true; model.focus = BrowseFocus(row.genre, action = true, column = desiredColumn, rowKey = row.key) }
                         }
                             .onPreviewKeyEvent {
                                 if (it.type != KeyEventType.KeyDown) false else when (it.key) {
                                     Key.DirectionLeft -> {
                                         if (row.videos.isEmpty()) rail.requestFocus()
-                                        else navigate(BrowseFocus(row.genre, row.videos.last().id.value, column = row.videos.lastIndex))
+                                        else navigate(BrowseFocus(row.genre, row.videos.last().id.value, column = row.videos.lastIndex, rowKey = row.key))
                                         true
                                     }
                                     Key.DirectionRight -> true
@@ -261,7 +261,7 @@ private fun BrowseShelf(row: BrowseRow, model: BrowseViewModel,
                                     else -> false
                                 }
                             }) {
-                        if (row.busy) model.cancel() else model.load(row.genre, more = row.cursor != null, retry = true)
+                        if (row.busy) model.cancel() else model.loadRow(row.key, more = row.cursor != null, retry = true)
                     }
                 }
             }

@@ -97,7 +97,7 @@ class TvContractTest {
             key(KeyEvent.KEYCODE_BACK); waitText("Search videos")
             // Home restores Settings in the vertical navigation rail.
             key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_CENTER)
-            waitText("About QuietScreen")
+            waitText("About Aprion TV")
             key(KeyEvent.KEYCODE_BACK); waitText("Search videos")
             println("TV_CONTRACT remoteHomeSettingsAbout=true savedSettings=true settingsIdle=true")
         } finally {

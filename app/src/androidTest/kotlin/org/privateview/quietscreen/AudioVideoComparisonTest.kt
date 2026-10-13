@@ -41,18 +41,18 @@ class AudioVideoComparisonTest {
         controller.player.addAnalyticsListener(object : AnalyticsListener {
             override fun onAudioUnderrun(eventTime: AnalyticsListener.EventTime, bufferSize: Int, bufferSizeMs: Long, elapsedSinceLastFeedMs: Long) {
                 underruns.incrementAndGet()
-                Log.w("QuietScreenProbe", "UNDERRUN bytes=$bufferSize bufferMs=$bufferSizeMs sinceFeedMs=$elapsedSinceLastFeedMs")
+                Log.w("AprionTVProbe", "UNDERRUN bytes=$bufferSize bufferMs=$bufferSizeMs sinceFeedMs=$elapsedSinceLastFeedMs")
             }
             override fun onAudioSinkError(eventTime: AnalyticsListener.EventTime, audioSinkError: Exception) {
                 // Avoid exception messages, which can contain URLs; preserve class names.
                 sinkError.set(audioSinkError.javaClass.simpleName)
-                Log.e("QuietScreenProbe", "SINK_ERROR type=${audioSinkError.javaClass.simpleName}")
+                Log.e("AprionTVProbe", "SINK_ERROR type=${audioSinkError.javaClass.simpleName}")
             }
             override fun onAudioDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
-                Log.i("QuietScreenProbe", "AUDIO_DECODER name=$decoderName initMs=$initializationDurationMs")
+                Log.i("AprionTVProbe", "AUDIO_DECODER name=$decoderName initMs=$initializationDurationMs")
             }
             override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
-                Log.i("QuietScreenProbe", "VIDEO_DECODER name=$decoderName initMs=$initializationDurationMs")
+                Log.i("AprionTVProbe", "VIDEO_DECODER name=$decoderName initMs=$initializationDurationMs")
             }
             override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, dropped: Int, elapsedMs: Long) {
                 droppedFrames.addAndGet(dropped)
@@ -83,7 +83,7 @@ class AudioVideoComparisonTest {
         instrument.runOnMainSync {
             val a = checkNotNull(controller.player.audioFormat)
             audioIdentity = "${a.sampleMimeType}/${a.sampleRate}/${a.channelCount}/${a.codecs}"
-            Log.i("QuietScreenProbe", "PHASE_START name=$name seconds=$durationSeconds player=${System.identityHashCode(controller.player)} audio=$audioIdentity")
+            Log.i("AprionTVProbe", "PHASE_START name=$name seconds=$durationSeconds player=${System.identityHashCode(controller.player)} audio=$audioIdentity")
         }
         var lastPosition = -1L
         var stall = 0
@@ -102,7 +102,7 @@ class AudioVideoComparisonTest {
                 val ready = p.playbackState == Player.STATE_READY && p.playWhenReady && p.playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE
                 stall = if (p.currentPosition <= lastPosition && ready) stall + 1 else 0
                 buffering = if (p.playbackState == Player.STATE_BUFFERING) buffering + 1 else 0
-                if (p.playbackState != previousState) Log.i("QuietScreenProbe", "PHASE_STATE name=$name state=${p.playbackState} position=${p.currentPosition} bufferedMs=${p.totalBufferedDuration}")
+                if (p.playbackState != previousState) Log.i("AprionTVProbe", "PHASE_STATE name=$name state=${p.playbackState} position=${p.currentPosition} bufferedMs=${p.totalBufferedDuration}")
                 previousState = p.playbackState
                 assertTrue("READY position stalled for five seconds", stall < 5)
                 assertTrue("Network buffering exceeded the existing 30-second limit", buffering < 30)
@@ -111,11 +111,11 @@ class AudioVideoComparisonTest {
                 assertEquals("Audio format changed within phase", audioIdentity, "${a.sampleMimeType}/${a.sampleRate}/${a.channelCount}/${a.codecs}")
                 if (elapsed % 15 == 0) {
                     val v = p.videoFormat
-                    Log.i("QuietScreenProbe", "PHASE_SAMPLE name=$name position=${p.currentPosition} bufferedMs=${p.totalBufferedDuration} suppression=${p.playbackSuppressionReason} height=${v?.height ?: 0} fps=${v?.frameRate ?: 0f} videoMime=${v?.sampleMimeType} videoBitrate=${v?.bitrate ?: 0} underruns=${underruns.get()-previousUnderruns} dropped=${droppedFrames.get()-previousDropped}")
+                    Log.i("AprionTVProbe", "PHASE_SAMPLE name=$name position=${p.currentPosition} bufferedMs=${p.totalBufferedDuration} suppression=${p.playbackSuppressionReason} height=${v?.height ?: 0} fps=${v?.frameRate ?: 0f} videoMime=${v?.sampleMimeType} videoBitrate=${v?.bitrate ?: 0} underruns=${underruns.get()-previousUnderruns} dropped=${droppedFrames.get()-previousDropped}")
                 }
             }
         }
-        Log.i("QuietScreenProbe", "PHASE_END name=$name underruns=${underruns.get()-previousUnderruns} dropped=${droppedFrames.get()-previousDropped} audibleQuality=UNVERIFIED")
+        Log.i("AprionTVProbe", "PHASE_END name=$name underruns=${underruns.get()-previousUnderruns} dropped=${droppedFrames.get()-previousDropped} audibleQuality=UNVERIFIED")
     }
 
     private fun release() = instrument.runOnMainSync { controller.release(); surface.release(); scope.cancel() }
@@ -140,7 +140,7 @@ class AudioVideoComparisonTest {
             configure(true, true); observe("video-fixed-b", true)
             configure(true, false); observe("video-adaptive", true)
             assertEquals("Comparison unexpectedly resolved a new stream", 1, resolves.get())
-            Log.i("QuietScreenProbe", "COMPARISON_COMPLETE samePlayer=true resolves=${resolves.get()}")
+            Log.i("AprionTVProbe", "COMPARISON_COMPLETE samePlayer=true resolves=${resolves.get()}")
         } finally { release() }
     }
 
@@ -172,7 +172,7 @@ class AudioVideoComparisonTest {
                 }
                 observe(name, true)
             }
-            Log.i("QuietScreenProbe", "PAIRED_COMPLETE sameAudioEndpoint=true height=${pair!!.first.height} fps=${pair.first.fps}")
+            Log.i("AprionTVProbe", "PAIRED_COMPLETE sameAudioEndpoint=true height=${pair!!.first.height} fps=${pair.first.fps}")
         } finally { release() }
     }
 
@@ -222,7 +222,7 @@ class AudioVideoComparisonTest {
                         instrument.runOnMainSync { assertNull(controller.status.value.error); ended=controller.player.playbackState==Player.STATE_ENDED }
                     }
                     assertTrue("Profile did not complete after final seek", ended)
-                    Log.i("QuietScreenProbe", "PROFILE_CONTROLS_COMPLETE pauseResume=true seeks=3 end=true")
+                    Log.i("AprionTVProbe", "PROFILE_CONTROLS_COMPLETE pauseResume=true seeks=3 end=true")
                 }
             } finally { release() }
         }

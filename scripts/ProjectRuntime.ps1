@@ -5,7 +5,7 @@ function Enter-QuietScreenOperation {
     try {
         $taskLease = [IO.File]::Open($taskLockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     } catch {
-        throw 'Another QuietScreen build or emulator launch is in progress. Finish that operation before starting this one.'
+        throw 'Another Aprion TV build or emulator launch is in progress. Finish that operation before starting this one.'
     }
     try {
         $taskEmulatorPrefix = (Join-Path $env:ANDROID_HOME 'emulator') + [IO.Path]::DirectorySeparatorChar

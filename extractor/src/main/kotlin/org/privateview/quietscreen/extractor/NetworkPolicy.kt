@@ -10,7 +10,7 @@ import java.net.InetAddress
 import java.util.concurrent.TimeUnit
 
 enum class NetworkRole { METADATA, MEDIA, THUMBNAIL }
-class PolicyViolation : IOException("QUIETSCREEN_NETWORK_POLICY")
+class PolicyViolation : IOException("APRION_TV_NETWORK_POLICY")
 
 object NetworkPolicy {
     fun validate(raw: String, role: NetworkRole): HttpUrl {
