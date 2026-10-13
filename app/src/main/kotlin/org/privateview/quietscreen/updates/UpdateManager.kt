@@ -72,7 +72,7 @@ class UpdateManager private constructor(private val context: Context) {
     fun check(automaticCheck: Boolean = false) {
         if (!foreground || job?.isCompleted == false || installing) return
         if (!configured) { mutable.value = mutable.value.copy(message = "This development build has no public update location."); return }
-        if (context.packageName != "org.privateview.quietscreen") {
+        if (context.packageName != "org.privateview.apriontv") {
             mutable.value = mutable.value.copy(message = "This test build has no production update feed. Install the official Aprion TV APK for signed updates.",
                 detail = detail("QS-U-TEST-BUILD"), busy = false, ready = false)
             return

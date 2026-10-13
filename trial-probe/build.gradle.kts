@@ -10,13 +10,13 @@ android {
     namespace = "org.privateview.quietscreen.trial.probe"
     compileSdk = 37
     defaultConfig {
-        applicationId = "org.privateview.quietscreen.trial.probe"
+        applicationId = "org.privateview.apriontv.trial.probe"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
         versionName = "1"
-        manifestPlaceholders["probeTarget"] = providers.gradleProperty("probeTarget").orElse("org.privateview.quietscreen.trial").get().also {
-            require(it in setOf("org.privateview.quietscreen.trial", "org.privateview.quietscreen", "org.privateview.quietscreen.debug"))
+        manifestPlaceholders["probeTarget"] = providers.gradleProperty("probeTarget").orElse("org.privateview.apriontv.trial").get().also {
+            require(it in setOf("org.privateview.apriontv.trial", "org.privateview.apriontv", "org.privateview.apriontv.debug"))
         }
     }
     sourceSets.getByName("main").java.srcDir("../app/src/androidTest/java")

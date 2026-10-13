@@ -5,7 +5,7 @@ $taskBuildTools = Get-ChildItem -LiteralPath "$env:ANDROID_HOME/build-tools" -Di
 if (!$taskBuildTools) { throw 'Build tools missing' }
 $taskUnsigned = Join-Path $taskRoot 'app/build/outputs/apk/release/app-release-unsigned.apk'
 $taskMetadata = Get-Content -Raw -LiteralPath (Join-Path $taskRoot 'app/build/outputs/apk/release/output-metadata.json') | ConvertFrom-Json
-if ($taskMetadata.applicationId -ne 'org.privateview.quietscreen' -or $taskMetadata.elements.Count -ne 1) { throw 'Unexpected release metadata' }
+if ($taskMetadata.applicationId -ne 'org.privateview.apriontv' -or $taskMetadata.elements.Count -ne 1) { throw 'Unexpected release metadata' }
 $taskConfig = ConvertFrom-StringData (Get-Content -Raw -LiteralPath (Join-Path $taskRoot 'release/public-updates.properties'))
 if ($taskConfig.owner -notmatch '^[A-Za-z0-9][A-Za-z0-9-]{0,38}$' -or $taskConfig.repo -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$') { throw 'Real update repository required' }
 $taskDestination = Join-Path $taskRoot "dist/$Tag"
@@ -24,7 +24,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Signed APK verification failed' }
     $taskHash = (Get-FileHash -LiteralPath $taskSigned).Hash.ToLowerInvariant()
     "$taskHash  Aprion-TV.apk" | Set-Content -LiteralPath (Join-Path $taskDestination 'SHA256SUMS.txt') -Encoding ascii
-    $taskPayload = @('QUIETSCREEN_UPDATE_V1','org.privateview.quietscreen', [string]$taskMetadata.elements[0].versionCode,
+    $taskPayload = @('QUIETSCREEN_UPDATE_V1','org.privateview.apriontv', [string]$taskMetadata.elements[0].versionCode,
         [string]$taskMetadata.elements[0].versionName,'26',[string](Get-Item -LiteralPath $taskSigned).Length,$taskHash,
         "https://github.com/$($taskConfig.owner)/$($taskConfig.repo)/releases/download/$Tag/Aprion-TV.apk") -join "`n"
     $taskPayloadPath = Join-Path $taskKeyDirectory 'update-payload.txt'
@@ -35,7 +35,7 @@ try {
     Copy-Item -LiteralPath "$PSScriptRoot/Sign-UpdateManifest.java" -Destination (Join-Path $taskCompileDirectory 'SignUpdateManifest.java')
     & "$env:JAVA_HOME/bin/javac.exe" -d $taskCompileDirectory (Join-Path $taskCompileDirectory 'SignUpdateManifest.java')
     if ($LASTEXITCODE -ne 0) { throw 'Metadata signer compile failed' }
-    & "$env:JAVA_HOME/bin/java.exe" -cp $taskCompileDirectory SignUpdateManifest $taskKeyPath $taskPayloadPath (Join-Path $taskDestination 'org.privateview.quietscreen.qsu')
+    & "$env:JAVA_HOME/bin/java.exe" -cp $taskCompileDirectory SignUpdateManifest $taskKeyPath $taskPayloadPath (Join-Path $taskDestination 'org.privateview.apriontv.qsu')
     if ($LASTEXITCODE -ne 0) { throw 'Metadata signing failed' }
 } finally {
     Remove-Item Env:QUIETSCREEN_RELEASE_PASSWORD -ErrorAction SilentlyContinue

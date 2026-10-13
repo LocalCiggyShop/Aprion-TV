@@ -132,7 +132,8 @@ class NewPipeCatalog : VideoCatalog, StreamResolver {
         val related = runCatching { e.relatedItems?.items.orEmpty().filterIsInstance<StreamInfoItem>()
             .take(32).mapNotNull(::summary).filterNot { it.id == id || it.live }.distinctBy { it.id } }.getOrDefault(emptyList())
         PlaybackPlan(id, e.name.take(500), e.length.coerceAtLeast(0) * 1000, System.currentTimeMillis(), videos, audio, hls, dash, captions,
-            genre = runCatching { GenreClassifier.providerCategory(e.category) }.getOrNull(), related = related)
+            genre = runCatching { GenreClassifier.providerCategory(e.category) }.getOrNull(), related = related,
+            uploadedAtMs = runCatching { e.uploadDate?.instant?.toEpochMilli()?.takeIf { it > 0 } }.getOrNull())
     }
 
     companion object { private val mutex = Mutex() }

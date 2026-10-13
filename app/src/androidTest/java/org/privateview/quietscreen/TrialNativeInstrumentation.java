@@ -57,7 +57,7 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             interests.edit().clear().commit(); continuing.edit().clear().commit();
             genrePreferences.edit().clear().putBoolean("enabled", true).commit();
         }
-        if ("browse".equals(check) || "continue".equals(check) || "searchHistory".equals(check) || "playerOverlay".equals(check)) continuing.edit().clear().commit();
+        if ("browse".equals(check) || "continue".equals(check) || "searchHistory".equals(check) || "playerOverlay".equals(check) || "uploadAge".equals(check)) continuing.edit().clear().commit();
         if ("playerOverlay".equals(check)) genrePreferences.edit().clear().putBoolean("enabled", true).putFloat("MUSIC", 30f).commit();
         if ("browse".equals(check) || "searchHistory".equals(check)) genrePreferences.edit().clear().putBoolean("enabled", true).commit();
         // Idle-network checks run with optional update traffic disabled, then restore the preference.
@@ -82,6 +82,9 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             } else if ("searchHistory".equals(check)) {
                 searchHistory(); passed++;
                 result.putString("stream", "\nOK (1 search history check)\n");
+            } else if ("uploadAge".equals(check)) {
+                uploadAge(); passed++;
+                result.putString("stream", "\nOK (1 upload-age check)\n");
             } else if ("uiFollowups".equals(check)) {
                 uiFollowups(); passed++;
                 result.putString("stream", "\nOK (1 UI follow-up check)\n");
@@ -279,6 +282,69 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             SystemClock.sleep(150); require(focused().contains("Sort:"), "Sort target not focused"); key(KeyEvent.KEYCODE_DPAD_CENTER); return;
         }
         throw new AssertionError("Adjacent sort control unavailable");
+    }
+    private boolean hasUploadAge() { return texts().matches("(?s).*Uploaded [0-9]+ (second|minute|hour|day|month|year)s? ago.*"); }
+    private android.graphics.Rect datedFocusBounds() {
+        List<AccessibilityNodeInfo> snapshot=nodes();
+        for(AccessibilityNodeInfo focus:snapshot) if(focus.isFocused() && focus.isClickable()) {
+            android.graphics.Rect focusRect=new android.graphics.Rect();focus.getBoundsInScreen(focusRect);
+            for(AccessibilityNodeInfo age:snapshot) if(age.isVisibleToUser() && age.getText()!=null &&
+                (age.getText().toString().matches("(?s).*Uploaded [0-9]+ (second|minute|hour|day|month|year)s? ago.*") ||
+                 age.getText().toString().contains("Upload date unavailable") || age.getText().toString().contains("Just uploaded"))) {
+                android.graphics.Rect ageRect=new android.graphics.Rect();age.getBoundsInScreen(ageRect);
+                if(!ageRect.isEmpty() && focusRect.contains(ageRect)) return focusRect;
+            }
+        }
+        return null;
+    }
+    private void holdTune() {
+        long down=SystemClock.uptimeMillis();
+        require(ui().injectInputEvent(new KeyEvent(down,down,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_CENTER,0),true),"Hold down rejected");
+        SystemClock.sleep(600);
+        require(ui().injectInputEvent(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_CENTER,1,0,-1,0,KeyEvent.FLAG_LONG_PRESS),true),"Hold event rejected");
+        waitFor("Tune recommendations",10,false); waitFocused("More like this");
+        require(ui().injectInputEvent(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_CENTER,2),true),"Repeat rejected");
+        require(ui().injectInputEvent(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_CENTER,3,0,-1,0,KeyEvent.FLAG_LONG_PRESS),true),"Flagged repeat rejected");
+        require(ui().injectInputEvent(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_UP,KeyEvent.KEYCODE_DPAD_CENTER,0),true),"Hold release rejected");
+        SystemClock.sleep(1100);
+        require(texts().contains("Tune recommendations") && !texts().contains("Saved:"),"Opening hold selected or dismissed feedback");
+    }
+    private void uploadAge() throws Exception {
+        search("dQw4w9WgXcQ"); waitFor("Never Gonna Give You Up",60,false);
+        require(hasUploadAge(), "Search results omitted known upload age");
+        capturePlayer("/data/local/tmp/aprion-upload-age-search.png");
+        openPinnedResult("Never Gonna Give You Up",true); waitFor("Playback Playing",75,true);
+        observePlayback(3); key(KeyEvent.KEYCODE_MEDIA_PAUSE); waitFor("Playback Paused",10,true);
+        require(hasUploadAge(), "Player details omitted known upload age");
+        key(KeyEvent.KEYCODE_DPAD_DOWN);
+        long until=SystemClock.elapsedRealtime()+60000;
+        while(SystemClock.elapsedRealtime()<until && (focused().contains("Play video") || datedFocusBounds()==null)) SystemClock.sleep(300);
+        android.graphics.Rect shelfFocus=datedFocusBounds();
+        require(shelfFocus!=null && !focused().contains("Play video"), "Related card omitted visible upload metadata within its focus bounds");
+        capturePlayer("/data/local/tmp/aprion-upload-age-player.png");
+        holdTune();
+        require(hasUploadAge() || texts().contains("Upload date unavailable"),"Feedback omitted upload metadata");
+        key(KeyEvent.KEYCODE_DPAD_CENTER); waitFor("Saved:",10,false);
+        SystemClock.sleep(1100); require(texts().contains("Tune recommendations"),"Feedback action dismissed dialog before Back");
+        capturePlayer("/data/local/tmp/aprion-recommendations-v2-feedback.png");
+        key(KeyEvent.KEYCODE_BACK);
+        until=SystemClock.elapsedRealtime()+10000;
+        while(SystemClock.elapsedRealtime()<until && (texts().contains("Tune recommendations") || !shelfFocus.equals(datedFocusBounds()))) SystemClock.sleep(100);
+        require(!texts().contains("Tune recommendations") && shelfFocus.equals(datedFocusBounds()),"Feedback did not restore the same dated related card");
+        key(KeyEvent.KEYCODE_BACK); key(KeyEvent.KEYCODE_BACK); waitFor("Search videos",10,false);
+        org.json.JSONObject records=new org.json.JSONObject(getTargetContext().getSharedPreferences("continue_watching",0).getString("records","{}"));
+        org.json.JSONArray videos=records.optJSONArray("videos");boolean persisted=false;
+        if(videos!=null) for(int i=0;i<videos.length();i++) if("dQw4w9WgXcQ".equals(videos.getJSONObject(i).optString("id"))) persisted=videos.getJSONObject(i).optLong("uploadedAt",0)>0;
+        require(persisted,"Playback exit did not persist upload metadata");
+        key(KeyEvent.KEYCODE_DPAD_RIGHT);
+        until=SystemClock.elapsedRealtime()+60000;
+        while(SystemClock.elapsedRealtime()<until && datedFocusBounds()==null) SystemClock.sleep(200);
+        require(datedFocusBounds()!=null,"Home recommendation not focused");
+        holdTune(); key(KeyEvent.KEYCODE_DPAD_CENTER); waitFor("Saved:",10,false);
+        SystemClock.sleep(1100); require(texts().contains("Tune recommendations"),"Home feedback dismissed before Back");
+        key(KeyEvent.KEYCODE_BACK); require(!texts().contains("Tune recommendations"),"Home Back did not dismiss feedback");
+        capturePlayer("/data/local/tmp/aprion-upload-age-home.png");
+        marker("UPLOAD_AGE_NATIVE search=true player=true relatedShelf=true feedback=true resumeDatePersisted=true minifiedMetadata=true playbackStopped=true holdRepeats=true actions=true HomeAndPlayerBack=true");
     }
     private void uiFollowups() throws Exception {
         search("BBC News", false); waitFor("Sort: Newest first", 10, false);
@@ -549,7 +615,10 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             path.equals("/data/local/tmp/aprion-recommendations-v2-feedback.png") ||
             path.equals("/data/local/tmp/aprion-recommendations-v2-home.png") ||
             path.equals("/data/local/tmp/aprion-v037-search.png") ||
-            path.equals("/data/local/tmp/aprion-v037-update-modal.png"), "Unexpected screenshot destination");
+            path.equals("/data/local/tmp/aprion-v037-update-modal.png") ||
+            path.equals("/data/local/tmp/aprion-upload-age-search.png") ||
+            path.equals("/data/local/tmp/aprion-upload-age-player.png") ||
+            path.equals("/data/local/tmp/aprion-upload-age-home.png"), "Unexpected screenshot destination");
         try (android.os.ParcelFileDescriptor.AutoCloseInputStream command = new android.os.ParcelFileDescriptor.AutoCloseInputStream(ui().executeShellCommand("screencap -p " + path))) {
             byte[] buffer = new byte[1024]; int total = 0, read;
             while ((read = command.read(buffer)) >= 0) { total += read; require(total <= 8192, "Screenshot command output exceeded bound"); }

@@ -161,6 +161,7 @@ fun SearchScreen(model: SearchViewModel, home: () -> Unit, play: (VideoSummary) 
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f)) {
                             Text(video.title, fontSize = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             Text(video.channel + (video.durationSeconds?.let { " · ${timeLabel(it * 1000)}" } ?: ""), fontSize = 13.sp, maxLines = 1)
+                            UploadAgeText(video, fontSize = 13.sp, color = androidx.tv.material3.LocalContentColor.current)
                         }
                         Text("PLAY", fontSize = 12.sp)
                     }

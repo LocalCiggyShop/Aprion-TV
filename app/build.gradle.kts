@@ -14,11 +14,11 @@ android {
     namespace = "org.privateview.quietscreen"
     compileSdk = 37
     defaultConfig {
-        applicationId = "org.privateview.quietscreen"
+        applicationId = "org.privateview.apriontv"
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.3.7-beta"
+        versionCode = 12
+        versionName = "0.3.8-beta"
         buildConfigField("String", "UPDATE_OWNER", "\"$updateOwner\"")
         buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
         buildConfigField("String", "UPDATE_BRANCH", "\"$updateBranch\"")

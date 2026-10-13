@@ -25,7 +25,7 @@ class MediaEndpoint(val url: String) { override fun toString() = "MediaEndpoint(
 data class VideoVariant(val key: String, val endpoint: MediaEndpoint, val mimeType: String, val codec: String?, val height: Int, val fps: Int, val bitrate: Int, val videoOnly: Boolean, val delivery: Delivery)
 data class AudioVariant(val key: String, val endpoint: MediaEndpoint, val mimeType: String, val codec: String?, val bitrate: Int, val original: Boolean, val language: String?, val delivery: Delivery)
 data class CaptionTrack(val language: String, val format: String, val endpoint: MediaEndpoint)
-data class PlaybackPlan(val id: VideoId, val title: String, val durationMs: Long, val fetchedAtMs: Long, val videos: List<VideoVariant>, val audio: List<AudioVariant>, val hls: MediaEndpoint?, val dash: MediaEndpoint?, val captions: List<CaptionTrack>, val live: Boolean = false, val genre: Genre? = null, val related: List<VideoSummary> = emptyList())
+data class PlaybackPlan(val id: VideoId, val title: String, val durationMs: Long, val fetchedAtMs: Long, val videos: List<VideoVariant>, val audio: List<AudioVariant>, val hls: MediaEndpoint?, val dash: MediaEndpoint?, val captions: List<CaptionTrack>, val live: Boolean = false, val genre: Genre? = null, val related: List<VideoSummary> = emptyList(), val uploadedAtMs: Long? = null)
 
 enum class ErrorCode { INVALID_QUERY, OFFLINE, TIMEOUT, RATE_LIMITED, UPSTREAM_CHANGED, SIGN_IN_REQUIRED, RESTRICTED, UNAVAILABLE, DRM, UNSUPPORTED_FORMAT, DECODER, SECURITY_POLICY }
 class AppException(val code: ErrorCode, cause: Throwable? = null) : Exception(code.name, cause)

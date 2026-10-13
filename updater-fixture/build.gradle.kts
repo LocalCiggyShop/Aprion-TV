@@ -3,7 +3,7 @@ android {
     namespace = "org.privateview.quietscreen.fixture"
     compileSdk = 37
     defaultConfig {
-        applicationId = "org.privateview.quietscreen"
+        applicationId = "org.privateview.apriontv"
         minSdk = 26
         targetSdk = 36
         versionCode = providers.gradleProperty("fixtureVersionCode").orElse("8").get().toInt().also { require(it in 1..2_100_000_000) }

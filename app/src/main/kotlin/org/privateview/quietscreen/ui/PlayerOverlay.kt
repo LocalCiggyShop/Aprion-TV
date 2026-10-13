@@ -84,12 +84,16 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
     fun focusShelf(index: Int) {
         navigation?.cancel()
         navigation = scope.launch {
-            repeat(3) { withFrameNanos { } }
+            if (currentArea != PlayerArea.RECOMMENDATIONS) repeat(2) { withFrameNanos { } }
             if (currentArea != PlayerArea.RECOMMENDATIONS) return@launch
             if (cards.isEmpty()) { shelfAction.requestFocus(); return@launch }
             val chosen = index.coerceIn(0, cards.lastIndex)
-            shelf.scrollToItem(chosen)
-            repeat(3) { withFrameNanos { } }
+            // Existing visible cards already have focus requesters. Snapping every
+            // focused card to index zero fights normal bring-into-view scrolling.
+            if (shelf.layoutInfo.visibleItemsInfo.none { it.index == chosen }) {
+                shelf.scrollToItem(chosen)
+                repeat(3) { withFrameNanos { } }
+            }
             if (currentArea == PlayerArea.RECOMMENDATIONS) cardsFocus[cards[chosen].id.value]?.requestFocus()
         }
     }
@@ -213,6 +217,7 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text(info.video.title, color = Cloud, fontSize = 18.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             Text(info.video.channel, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            UploadAgeText(info.video)
                             Text(info.status + if (info.renderedHeight > 0) " · ${info.renderedHeight}p" else "", color = if (info.error == null) Muted else Warning,
                                 fontSize = 11.sp, modifier = Modifier.semantics { contentDescription = "Playback ${info.status}; rendered ${info.renderedHeight}p" })
                         }
@@ -241,7 +246,7 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
                 Text("Recommended" + if (row.contextual) " · ${row.hint}" else "", color = Cloud, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Text(if (area == PlayerArea.RECOMMENDATIONS) "↑ Playback · OK Watch · Hold OK / Menu Tune" else "↓ Explore videos", color = Muted, fontSize = 11.sp)
             }
-            LazyRow(state = shelf, modifier = Modifier.fillMaxWidth().height(if (area == PlayerArea.RECOMMENDATIONS) 162.dp else 68.dp),
+            LazyRow(state = shelf, modifier = Modifier.fillMaxWidth().height(if (area == PlayerArea.RECOMMENDATIONS) 186.dp else 68.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(4.dp)) {
                 itemsIndexed(cards, key = { _, video -> video.id.value }) { index, video ->
                     val focus = remember(video.id) { FocusRequester() }
@@ -302,8 +307,6 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
         RecommendationFeedbackDialog(video, close = { feedbackVideo = null; focusShelf(shelfIndex) }) { action ->
             feedback(video, action)
             pinnedCards = emptyList(); pinnedOrigins = emptyMap(); waitingForCard = true
-            feedbackVideo = null
-            scope.launch { repeat(3) { withFrameNanos { } }; focusShelf(shelfIndex) }
         }
     }
 }
@@ -404,7 +407,7 @@ private fun PlaybackGlyph(kind: String, tint: Color, modifier: Modifier) = Canva
 @Composable
 private fun CompactVideoCard(video: VideoSummary, modifier: Modifier, play: () -> Unit) {
     var selected by remember { mutableStateOf(false) }
-    Button(onClick = play, modifier = modifier.width(200.dp).height(156.dp).onFocusChanged { selected = it.isFocused }
+    Button(onClick = play, modifier = modifier.width(200.dp).height(180.dp).onFocusChanged { selected = it.isFocused }
         .border(if (selected) 2.dp else 0.dp, if (selected) Accent else Color.Transparent, RoundedCornerShape(10.dp)),
         contentPadding = PaddingValues(0.dp), shape = ButtonDefaults.shape(shape = RoundedCornerShape(10.dp)),
         scale = ButtonDefaults.scale(focusedScale = 1f), colors = ButtonDefaults.colors(containerColor = Panel, focusedContainerColor = Panel, contentColor = Cloud, focusedContentColor = Cloud)) {
@@ -413,6 +416,7 @@ private fun CompactVideoCard(video: VideoSummary, modifier: Modifier, play: () -
                 Text(video.durationSeconds?.let { timeLabel(it * 1000) } ?: "VIDEO", color = Cloud, fontSize = 10.sp,
                     modifier = Modifier.align(Alignment.BottomEnd).padding(5.dp).background(Color.Black.copy(alpha = .8f), RoundedCornerShape(3.dp)).padding(3.dp)) }
             Text(video.title, color = Cloud, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp))
+            UploadAgeText(video, modifier = Modifier.padding(horizontal = 8.dp))
         }
     }
 }

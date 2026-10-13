@@ -14,12 +14,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Manifest inspection failed' }
 $taskManifest | Set-Content -LiteralPath (Join-Path $taskRoot 'docs/evidence/beta-manifest.xml')
 [xml]$taskXml=$taskManifest -join "`n"
 $taskAndroid='http://schemas.android.com/apk/res/android'
-if ($taskXml.manifest.package -ne 'org.privateview.quietscreen' -or
+if ($taskXml.manifest.package -ne 'org.privateview.apriontv' -or
     $taskXml.manifest.application.GetAttribute('debuggable',$taskAndroid) -eq 'true' -or
     $taskXml.manifest.application.GetAttribute('testOnly',$taskAndroid) -eq 'true' -or
     $taskXml.manifest.application.GetAttribute('allowBackup',$taskAndroid) -ne 'false' -or
     $taskXml.manifest.application.GetAttribute('usesCleartextTraffic',$taskAndroid) -ne 'false') { throw 'Unexpected release manifest' }
-$taskAllowed=@('android.permission.INTERNET','android.permission.REQUEST_INSTALL_PACKAGES','android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION','org.privateview.quietscreen.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION')
+$taskAllowed=@('android.permission.INTERNET','android.permission.REQUEST_INSTALL_PACKAGES','android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION','org.privateview.apriontv.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION')
 foreach($taskPermission in $taskXml.manifest.'uses-permission') {
     if ($taskPermission.GetAttribute('name',$taskAndroid) -notin $taskAllowed) { throw 'Unexpected permission' }
 }

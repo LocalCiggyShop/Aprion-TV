@@ -34,6 +34,7 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
     progress: (Long, Long, Boolean, Genre?) -> Unit = { _, _, _, _ -> },
     recommendations: org.privateview.quietscreen.presentation.BrowseViewModel? = null,
     feedback: (VideoSummary, RecommendationFeedback) -> Unit = { _, _ -> },
+    metadata: (VideoSummary) -> Unit = {},
     playNext: (VideoSummary, Genre?) -> Unit = { _, _ -> }, back: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -51,6 +52,7 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
     val watchTime = remember(controller) { WatchTime() }
     val recordWatch by rememberUpdatedState(watched)
     val recordProgress by rememberUpdatedState(progress)
+    val recordMetadata by rememberUpdatedState(metadata)
     var checkpoint by remember { mutableLongStateOf(0) }
     val exit = remember(controller) { PlayerExit() }
     fun knownDuration(): Long = controller.player.duration.takeIf { it > 0 }
@@ -61,6 +63,7 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
         ?: GenreClassifier.classify(video.copy(title = controller.plan?.title ?: video.title))
     fun leavePlayer() { exit.release(); back() }
     LaunchedEffect(video.id, controller.plan) {
+        controller.plan?.uploadedAtMs?.let { recordMetadata(video.copy(uploadedAtMs = it)) }
         recommendations?.context(video.copy(title = controller.plan?.title ?: video.title), controller.plan?.related.orEmpty())
     }
 
@@ -121,7 +124,7 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
         ?: org.privateview.quietscreen.presentation.BrowseRow(null, loaded = true, recommended = true)
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(factory = { view }, modifier = Modifier.fillMaxSize())
-        PlayerOverlay(PlayerOverlayInfo(video, position, duration, playing,
+        PlayerOverlay(PlayerOverlayInfo(video.copy(uploadedAtMs = controller.plan?.uploadedAtMs ?: video.uploadedAtMs), position, duration, playing,
             controller.player.playbackState == Player.STATE_ENDED, status.text, status.renderedHeight, status.error,
             controller.plan != null && !released,
             !released && controller.plan != null && controller.player.playbackState != Player.STATE_IDLE && duration > 0,

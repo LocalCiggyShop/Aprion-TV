@@ -61,6 +61,7 @@ class MainActivity : ComponentActivity() {
         browseModel.continueWatching(continuing.videos())
         setContent {
             MaterialTheme {
+                UploadAgeScope {
                 val updateStatus by updates.state.collectAsStateWithLifecycle()
                 var updatePrompt by remember { mutableStateOf(false) }
                 LaunchedEffect(updateStatus.ready, updateStatus.busy, screen) {
@@ -107,6 +108,7 @@ class MainActivity : ComponentActivity() {
                                     continuing.record(video, position, duration, ended, detected ?: genre)
                                     browseModel.continueWatching(continuing.videos())
                                 }, recommendations = browseModel, feedback = ::recommendationFeedback,
+                                metadata = { updated -> if (selected?.id == updated.id) selected = updated },
                                 playNext = { next, nextGenre ->
                                     browseModel.cancel(); selectedGenre = nextGenre ?: GenreClassifier.classify(next)
                                     startPositionMs = 0; selected = next
@@ -120,6 +122,7 @@ class MainActivity : ComponentActivity() {
                         (screen == Screen.HOME || screen == Screen.SETTINGS)) UpdateInstallDialog(updateStatus,
                         close = { updatePrompt = false }, install = { updatePrompt = false; updates.install() })
                 }
+            }
             }
         }
     }

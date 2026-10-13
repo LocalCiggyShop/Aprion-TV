@@ -150,12 +150,11 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
         }
     }
     feedbackVideo?.let { video ->
-        fun dismiss() { feedbackVideo = null; model.focus?.let(::navigate) }
+        fun dismiss() { feedbackVideo = null; scope.launch { model.awaitRanking(); model.focus?.let(::navigate) } }
         RecommendationFeedbackDialog(video, close = ::dismiss) { action ->
             val target = model.focus?.let { if (action == RecommendationFeedback.MORE) it else it.copy(videoId = null) }
             if (target != null) model.focus = target
-            feedback(video, action); feedbackVideo = null
-            scope.launch { model.awaitRanking(); repeat(3) { withFrameNanos { } }; target?.let(::navigate) }
+            feedback(video, action)
         }
     }
 }
@@ -300,7 +299,7 @@ private class NavigationQueue {
 @Composable
 private fun VideoCard(video: VideoSummary, modifier: Modifier, resumeMs: Long? = null, play: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    Button(onClick = play, modifier = modifier.width(224.dp).height(205.dp).onFocusChanged { focused = it.isFocused }
+    Button(onClick = play, modifier = modifier.width(224.dp).height(228.dp).onFocusChanged { focused = it.isFocused }
         .border(if (focused) 2.dp else 0.dp, if (focused) Accent else Panel, RoundedCornerShape(12.dp)),
         contentPadding = PaddingValues(0.dp),
         shape = ButtonDefaults.shape(shape = RoundedCornerShape(12.dp)),
@@ -323,6 +322,7 @@ private fun VideoCard(video: VideoSummary, modifier: Modifier, resumeMs: Long? =
             Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(video.title, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(video.channel, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                UploadAgeText(video)
             }
         }
     }

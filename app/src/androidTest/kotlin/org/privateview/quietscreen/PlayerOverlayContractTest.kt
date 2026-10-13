@@ -6,6 +6,8 @@ import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -20,22 +22,37 @@ import org.privateview.quietscreen.ui.*
 @RunWith(AndroidJUnit4::class)
 class PlayerOverlayContractTest {
     private val instrument = InstrumentationRegistry.getInstrumentation()
+    private val automation by lazy { instrument.uiAutomation.apply {
+        val config = serviceInfo
+        config.flags = config.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+        serviceInfo = config
+    } }
     private fun onMain(block: () -> Unit) = instrument.runOnMainSync(block)
     private fun video(number: Int) = VideoSummary(VideoId("%011d".format(number)), "Recommendation $number", "Fixture channel", null, 120)
     private fun nodes(): List<AccessibilityNodeInfo> {
-        val ui = instrument.uiAutomation
-        val service = ui.serviceInfo
-        service.flags = service.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-        ui.serviceInfo = service
+        val ui = automation
         if (android.os.Build.VERSION.SDK_INT >= 33) ui.clearCache()
         val result = mutableListOf<AccessibilityNodeInfo>()
         fun visit(node: AccessibilityNodeInfo) { if (result.size >= 2000 || !node.refresh()) return; result += node; for (index in 0 until node.childCount) node.getChild(index)?.let(::visit) }
-        ui.windows.mapNotNull { it.root }.filter { it.packageName?.toString() == instrument.targetContext.packageName }.forEach(::visit)
+        ui.windows.filter { it.isActive }.mapNotNull { it.root }.filter { it.packageName?.toString() == instrument.targetContext.packageName }.forEach(::visit)
+        if (result.isEmpty()) ui.rootInActiveWindow?.takeIf { it.packageName?.toString() == instrument.targetContext.packageName }?.let(::visit)
         return result
     }
     private fun label(node: AccessibilityNodeInfo): String = listOfNotNull(node.text, node.contentDescription).joinToString(" ") +
         (0 until node.childCount).mapNotNull { node.getChild(it) }.joinToString(" ") { label(it) }
-    private fun focused() = nodes().filter { it.isFocused }.joinToString(" ") { label(it) }
+    private fun focused(): String {
+        val snapshot = nodes()
+        return snapshot.filter { it.isFocused }.joinToString(" ") { focus ->
+            val rectangle = android.graphics.Rect().apply { focus.getBoundsInScreen(this) }
+            val original = label(focus).trim()
+            val extra = snapshot.filter { node ->
+                val textBounds = android.graphics.Rect().apply { node.getBoundsInScreen(this) }
+                node.isVisibleToUser && !textBounds.isEmpty && rectangle.contains(textBounds)
+            }.map { listOfNotNull(it.text, it.contentDescription).joinToString(" ").trim() }
+                .filter { it.isNotEmpty() && !original.contains(it) }.distinct()
+            (listOf(original) + extra).joinToString(" ")
+        }
+    }
     private fun text() = nodes().map(::label).joinToString(" ")
     private fun await(seconds: Int = 6, condition: () -> Boolean) {
         val until = SystemClock.elapsedRealtime() + seconds * 1000
@@ -51,18 +68,20 @@ class PlayerOverlayContractTest {
 
     @Test fun recommendationFeedbackMenuDoesNotPlayOrSeekAndRestoresShelfFocus() {
         withFixture { host ->
-            var selected: RecommendationFeedback? = null; var opens = 0; var position = 30_000L
+            var selected: RecommendationFeedback? = null; var saves = 0; var opens = 0; var position = 30_000L
             onMain { host.setContent { MaterialTheme {
                 PlayerOverlay(PlayerOverlayInfo(video(90), position, 120_000, false, false, "Paused", hasPlan = true, canSeek = true),
                     BrowseRow(null, listOf(video(91), video(92)), loaded = true, recommended = true),
                     {}, {}, {}, {}, { position += it }, { _, _ -> opens++ }, {}, {}, { emptyList() }, { emptyList() },
-                    feedback = { target, action -> assertEquals(video(91).id, target.id); selected = action })
+                    feedback = { target, action -> assertEquals(video(91).id, target.id); selected = action; saves++ })
             } } }
             await { focused().contains("Play video") }
             key(KeyEvent.KEYCODE_DPAD_DOWN); await { focused().contains("Recommendation 91") }
             key(KeyEvent.KEYCODE_MENU); await { focused().trim() == "More like this" }
             key(KeyEvent.KEYCODE_DPAD_DOWN); await { focused().trim() == "Not interested" }
-            key(KeyEvent.KEYCODE_DPAD_CENTER); await { selected == RecommendationFeedback.LESS && focused().contains("Recommendation 91") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER); await { selected == RecommendationFeedback.LESS && text().contains("Saved:") && focused().trim() == "Cancel" }
+            Thread.sleep(1100); assertTrue(text().contains("Tune recommendations")); assertEquals(1, saves)
+            key(KeyEvent.KEYCODE_BACK); await { focused().contains("Recommendation 91") }
             assertEquals(0, opens); assertEquals(30_000L, position)
             key(KeyEvent.KEYCODE_MENU); await { focused().trim() == "More like this" }
             key(KeyEvent.KEYCODE_BACK); await { focused().contains("Recommendation 91") }
@@ -71,8 +90,12 @@ class PlayerOverlayContractTest {
             instrument.sendKeySync(KeyEvent(down, down, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 0))
             instrument.sendKeySync(KeyEvent(down, down + 600, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 1,
                 0, -1, 0, KeyEvent.FLAG_LONG_PRESS))
-            instrument.sendKeySync(KeyEvent(down, down + 601, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, 0))
             await { focused().trim() == "More like this" }
+            instrument.sendKeySync(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 2))
+            instrument.sendKeySync(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 3,
+                0, -1, 0, KeyEvent.FLAG_LONG_PRESS))
+            instrument.sendKeySync(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+            Thread.sleep(1100); assertTrue(text().contains("Tune recommendations")); assertFalse(text().contains("Saved:")); assertEquals(1, saves)
             assertEquals(0, opens)
             key(KeyEvent.KEYCODE_BACK); await { focused().contains("Recommendation 92") }
         }
@@ -154,6 +177,35 @@ class PlayerOverlayContractTest {
         }
     }
 
+    @Test fun shelfMovesVisibleFocusWithoutSnappingAndReachesOffscreenCards() {
+        withFixture { host ->
+            onMain { host.setContent { MaterialTheme { androidx.compose.foundation.layout.Box(
+                androidx.compose.ui.Modifier.fillMaxSize().background(Ink)) {
+                PlayerOverlay(PlayerOverlayInfo(video(90), 30_000, 120_000, false, false, "Paused", hasPlan = true),
+                    BrowseRow(null, (91..102).map(::video), loaded = true, recommended = true),
+                    {}, {}, {}, {}, {}, { _, _ -> }, {}, {}, { emptyList() }, { emptyList() })
+            } } } }
+            fun bounds(number: Int): android.graphics.Rect? {
+                val snapshot = nodes()
+                val title = snapshot.firstOrNull { it.isVisibleToUser && it.text?.toString()?.contains("Recommendation $number") == true } ?: return null
+                val titleBounds = android.graphics.Rect().apply { title.getBoundsInScreen(this) }
+                return snapshot.filter { it.isClickable && it.isVisibleToUser }.map {
+                    android.graphics.Rect().apply { it.getBoundsInScreen(this) }
+                }.firstOrNull { it.contains(titleBounds) }
+            }
+            await { focused().contains("Play video") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN); await { focused().contains("Recommendation 91") }
+            Thread.sleep(500)
+            val first = bounds(91); assertNotNull(first)
+            key(KeyEvent.KEYCODE_DPAD_RIGHT); await { focused().contains("Recommendation 92") }
+            Thread.sleep(500); assertEquals("Visible focus must not snap the row", first, bounds(91))
+            key(KeyEvent.KEYCODE_DPAD_LEFT); await { focused().contains("Recommendation 91") }
+            assertEquals(first, bounds(91))
+            for (number in 92..102) { key(KeyEvent.KEYCODE_DPAD_RIGHT); await { focused().contains("Recommendation $number") } }
+            for (number in 101 downTo 91) { key(KeyEvent.KEYCODE_DPAD_LEFT); await { focused().contains("Recommendation $number") } }
+        }
+    }
+
     @Test fun hiddenOverlayArrowsSeekOnFirstPressAndPausedOverlayStaysVisible() {
         withFixture { host ->
             var position by mutableLongStateOf(30_000)
@@ -221,6 +273,10 @@ class PlayerOverlayContractTest {
         try {
             await { focused().contains("Home") }
             test(host)
+        } catch (failure: Throwable) {
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(instrument.uiAutomation.executeShellCommand(
+                "screencap -p /data/local/tmp/aprion-player-contract-failure.png")).use { it.readBytes() }
+            throw failure
         } finally {
             onMain { host.finish() }; instrument.waitForIdleSync()
             preferences.edit().putBoolean("automatic", automatic).commit()
