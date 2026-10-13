@@ -81,9 +81,9 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
     }
     BackHandler { if (model.focus != null) { model.focus = null; rail.requestFocus() } else exit() }
     Row(Modifier.fillMaxSize()) {
-        Column(Modifier.width(176.dp).fillMaxHeight().background(Panel.copy(alpha = .45f))
+        Column(Modifier.width(176.dp).fillMaxHeight().background(Panel)
             .padding(start = 20.dp, end = 16.dp, top = 30.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("APRION TV", color = Mint, fontSize = 17.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, lineHeight = 21.sp)
+            Text("APRION TV", color = Accent, fontSize = 17.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, lineHeight = 21.sp)
             Spacer(Modifier.height(16.dp))
             listOf("home" to "Home", "search" to "Search videos", "settings" to "Settings", "about" to "About").forEach { (id, label) ->
                 TvAction(label, Modifier.fillMaxWidth()
@@ -279,7 +279,7 @@ private class NavigationQueue {
 private fun VideoCard(video: VideoSummary, modifier: Modifier, resumeMs: Long? = null, play: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Button(onClick = play, modifier = modifier.width(224.dp).height(205.dp).onFocusChanged { focused = it.isFocused }
-        .border(if (focused) 2.dp else 0.dp, if (focused) Mint else Panel, RoundedCornerShape(12.dp)),
+        .border(if (focused) 2.dp else 0.dp, if (focused) Accent else Panel, RoundedCornerShape(12.dp)),
         contentPadding = PaddingValues(0.dp),
         shape = ButtonDefaults.shape(shape = RoundedCornerShape(12.dp)),
         scale = ButtonDefaults.scale(focusedScale = 1.03f),
@@ -291,7 +291,7 @@ private fun VideoCard(video: VideoSummary, modifier: Modifier, resumeMs: Long? =
                     Text("Resume ${timeLabel(resumeMs)}", color = Cloud, fontSize = 11.sp,
                         modifier = Modifier.align(Alignment.TopStart).padding(7.dp).background(Ink.copy(alpha = .9f), RoundedCornerShape(4.dp)).padding(4.dp))
                     Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Panel)) {
-                        Box(Modifier.fillMaxWidth((resumeMs.toFloat() / ((video.durationSeconds ?: 1) * 1000)).coerceIn(0f, 1f)).height(3.dp).background(Mint))
+                        Box(Modifier.fillMaxWidth((resumeMs.toFloat() / ((video.durationSeconds ?: 1) * 1000)).coerceIn(0f, 1f)).height(3.dp).background(Accent))
                     }
                 }
                 Text(if (video.live) "LIVE" else video.durationSeconds?.let { timeLabel(it * 1000) } ?: "VIDEO",

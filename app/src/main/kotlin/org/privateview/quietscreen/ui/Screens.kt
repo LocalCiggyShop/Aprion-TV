@@ -46,17 +46,19 @@ import org.privateview.quietscreen.core.VideoSummary
 import org.privateview.quietscreen.presentation.SearchViewModel
 import org.privateview.quietscreen.updates.UpdateManager
 
-val Ink = Color(0xFF0B171D)
-val Panel = Color(0xFF1A303A)
-val Mint = Color(0xFF9BE4CE)
-val Cloud = Color(0xFFF1F6F4)
-val Muted = Color(0xFFA8B9BC)
+val Ink = Color(0xFF101114)
+val Panel = Color(0xFF1B1D23)
+val RaisedPanel = Color(0xFF282B34)
+val Accent = Color(0xFFA8B5FF)
+val Cloud = Color(0xFFF4F5F7)
+val Muted = Color(0xFFADB2C0)
+val Warning = Color(0xFFFF9B91)
 
 @Composable
 fun TvAction(label: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
     Button(onClick = onClick, enabled = enabled, modifier = modifier,
-        colors = ButtonDefaults.colors(containerColor = Panel, contentColor = Cloud,
-            focusedContainerColor = Mint, focusedContentColor = Ink)) {
+        colors = ButtonDefaults.colors(containerColor = RaisedPanel, contentColor = Cloud,
+            focusedContainerColor = Accent, focusedContentColor = Ink)) {
         Text(label, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
@@ -74,10 +76,10 @@ fun HomeScreen(initialFocus: String = "search", search: () -> Unit, settings: ()
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { first.requestFocus() }
     BackHandler(onBack = exit)
-    Column(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Ink, Color(0xFF15353C))))
+    Column(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Ink, Panel)))
         .padding(horizontal = 48.dp, vertical = 34.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("APRION TV", color = Mint, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 3.sp)
+            Text("APRION TV", color = Accent, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 3.sp)
             Text("WATCH AT YOUR PACE", color = Muted, fontSize = 12.sp, letterSpacing = 2.sp)
         }
         Spacer(Modifier.weight(1f))
@@ -129,8 +131,8 @@ fun SearchScreen(model: SearchViewModel, home: () -> Unit, play: (VideoSummary) 
                             keyboard?.hide(); submit.requestFocus(); true
                         } else false
                     }
-                    .background(Panel, RoundedCornerShape(10.dp))
-                    .border(if (inputFocused) 2.dp else 1.dp, if (inputFocused) Mint else Panel, RoundedCornerShape(10.dp)).padding(14.dp),
+                    .background(RaisedPanel, RoundedCornerShape(10.dp))
+                    .border(if (inputFocused) 2.dp else 1.dp, if (inputFocused) Accent else RaisedPanel, RoundedCornerShape(10.dp)).padding(14.dp),
                 singleLine = true, textStyle = TextStyle(color = Cloud, fontSize = 19.sp),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { keyboard?.hide(); model.search() }),
@@ -138,7 +140,7 @@ fun SearchScreen(model: SearchViewModel, home: () -> Unit, play: (VideoSummary) 
             TvAction(if (state.busy) "Search again" else "Search", Modifier.focusRequester(submit)) { keyboard?.hide(); model.search() }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(state.message, color = if (state.error == null) Muted else Color(0xFFFFD1AA), fontSize = 14.sp, modifier = Modifier.weight(1f))
+            Text(state.message, color = if (state.error == null) Muted else Warning, fontSize = 14.sp, modifier = Modifier.weight(1f))
             if (state.busy) TvAction("Cancel search") { model.cancel() }
             if (state.error != null && !state.busy) TvAction("Try search again") { model.search() }
         }
@@ -150,7 +152,7 @@ fun SearchScreen(model: SearchViewModel, home: () -> Unit, play: (VideoSummary) 
                     model.listIndex = list.firstVisibleItemIndex; model.listOffset = list.firstVisibleItemScrollOffset
                     keyboard?.hide(); play(video)
                 }, modifier = Modifier.fillMaxWidth().then(focus).onFocusChanged { if (it.isFocused) model.focusedVideo = video.id.value },
-                    colors = ButtonDefaults.colors(containerColor = Panel, contentColor = Cloud, focusedContainerColor = Mint, focusedContentColor = Ink)) {
+                    colors = ButtonDefaults.colors(containerColor = RaisedPanel, contentColor = Cloud, focusedContainerColor = Accent, focusedContentColor = Ink)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Thumbnail(video.thumbnail)
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f)) {
@@ -202,7 +204,7 @@ fun SettingsScreen(settings: AppSettings, updates: UpdateManager, personalizatio
             TvAction("Clear browsing session") { clearSession(); message = "Search results and saved watch history cleared. Your learned preferences are kept." }
             TvAction("Reset playback settings") { settings.reset(); height = settings.maxHeight; message = "Playback settings restored to their defaults." }
         }
-        Text(message, color = Mint, fontSize = 14.sp)
+        Text(message, color = Accent, fontSize = 14.sp)
         Text("Recommended for you", color = Cloud, fontSize = 19.sp)
         Text("Recommended learns which types of videos you enjoy from how long you watch and how much you finish. You'll see more of your favourites, along with fresh discoveries, when you return Home.", color = Muted, fontSize = 14.sp)
         Text("Videos from Search count too when their type can be identified. Learning usually starts after 30 seconds, or after 10 seconds and 80% of a short video. Even brief unfinished watches can appear in Continue watching.", color = Muted, fontSize = 14.sp)
@@ -213,7 +215,7 @@ fun SettingsScreen(settings: AppSettings, updates: UpdateManager, personalizatio
             }
             TvAction("Reset personalization") { personalization.reset(); personalizationMessage = "Your learned preferences are erased. Recommended starts fresh." }
         }
-        Text(personalizationMessage, color = Mint, fontSize = 14.sp)
+        Text(personalizationMessage, color = Accent, fontSize = 14.sp)
         Text("Turn personalization off to pause learning and see a varied mix. Reset personalization erases your learned preferences. Neither option clears Continue watching.", color = Muted, fontSize = 14.sp)
         Text("App updates", color = Cloud, fontSize = 19.sp)
         Text(updateState.message, color = Muted, fontSize = 14.sp)

@@ -36,7 +36,7 @@ fun UpdateScreen(status: UpdateStatus, cancel: () -> Unit) {
         Spacer(Modifier.height(24.dp))
         if (status.phase == UpdatePhase.DOWNLOADING) {
             Box(Modifier.width(540.dp).height(8.dp).background(Panel).progressSemantics(status.fraction)) {
-                Box(Modifier.fillMaxHeight().fillMaxWidth(status.fraction).background(Mint))
+                Box(Modifier.fillMaxHeight().fillMaxWidth(status.fraction).background(Accent))
             }
             Spacer(Modifier.height(16.dp))
             Text("${status.sizeLabel} · ${(status.fraction * 100).toInt()}%", color = Cloud, fontSize = 19.sp)
@@ -44,7 +44,7 @@ fun UpdateScreen(status: UpdateStatus, cancel: () -> Unit) {
             val rotation by rememberInfiniteTransition(label = "Update spinner").animateFloat(
                 0f, 360f, infiniteRepeatable(tween(1000, easing = LinearEasing)), label = "Rotation")
             Canvas(Modifier.size(40.dp).graphicsLayer { rotationZ = rotation }.progressSemantics()) {
-                drawArc(Mint, 0f, 270f, false, style = Stroke(4.dp.toPx(), cap = StrokeCap.Round))
+                drawArc(Accent, 0f, 270f, false, style = Stroke(4.dp.toPx(), cap = StrokeCap.Round))
             }
             Spacer(Modifier.height(16.dp))
             if (status.totalBytes > 0) Text("APK size: ${"%.2f".format(java.util.Locale.ROOT, status.totalBytes / 1_000_000.0)} MB", color = Muted, fontSize = 17.sp)

@@ -194,7 +194,7 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
                 var focused by remember { mutableStateOf(false) }
                 Button(onClick = togglePlayback, modifier = Modifier.weight(1f).widthIn(max = 570.dp).focusRequester(transportFocus)
                     .onFocusChanged { if (it.isFocused) area = PlayerArea.TRANSPORT; focused = it.isFocused }
-                    .border(if (focused) 1.dp else 0.dp, if (focused) Mint else Color.Transparent, RoundedCornerShape(12.dp))
+                    .border(if (focused) 1.dp else 0.dp, if (focused) Accent else Color.Transparent, RoundedCornerShape(12.dp))
                     .semantics { contentDescription = if (info.ended) "Replay video" else if (info.playing) "Pause video" else "Play video" },
                     contentPadding = PaddingValues(12.dp),
                     scale = ButtonDefaults.scale(focusedScale = 1f), shape = ButtonDefaults.shape(shape = RoundedCornerShape(12.dp)),
@@ -205,7 +205,7 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text(info.video.title, color = Cloud, fontSize = 18.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             Text(info.video.channel, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(info.status + if (info.renderedHeight > 0) " · ${info.renderedHeight}p" else "", color = if (info.error == null) Muted else Color(0xFFFFD1AA),
+                            Text(info.status + if (info.renderedHeight > 0) " · ${info.renderedHeight}p" else "", color = if (info.error == null) Muted else Warning,
                                 fontSize = 11.sp, modifier = Modifier.semantics { contentDescription = "Playback ${info.status}; rendered ${info.renderedHeight}p" })
                         }
                     }
@@ -221,7 +221,7 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
             Box(Modifier.fillMaxWidth().height(4.dp).background(Color.White.copy(alpha = .3f), RoundedCornerShape(2.dp))
                 .semantics { contentDescription = "Playback position ${info.position / 1000} of ${info.duration / 1000} seconds" }) {
                 Box(Modifier.fillMaxWidth(if (info.duration > 0) (info.position.toFloat() / info.duration).coerceIn(0f, 1f) else 0f)
-                    .height(4.dp).background(Mint, RoundedCornerShape(2.dp)))
+                    .height(4.dp).background(Accent, RoundedCornerShape(2.dp)))
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(timeLabel(info.position), color = Muted, fontSize = 11.sp)
@@ -316,7 +316,7 @@ private fun PlayerChoicePanel(title: String, choices: List<Pair<String, () -> Un
     }
     LaunchedEffect(title) { repeat(2) { withFrameNanos { } }; first.requestFocus() }
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .55f)).padding(32.dp), contentAlignment = Alignment.CenterEnd) {
-        Column(Modifier.width(340.dp).heightIn(max = 420.dp).background(Panel, RoundedCornerShape(18.dp)).padding(22.dp),
+        Column(Modifier.width(340.dp).heightIn(max = 420.dp).background(RaisedPanel, RoundedCornerShape(18.dp)).padding(22.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text(title, color = Cloud, fontSize = 24.sp, fontWeight = FontWeight.Medium)
             if (explanation != null) Text(explanation, color = Muted, fontSize = 15.sp)
@@ -344,7 +344,7 @@ private fun BufferingIndicator(modifier: Modifier) {
         .semantics { contentDescription = "Buffering video" }, horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Canvas(Modifier.size(44.dp)) {
-            drawArc(Mint, rotation, 270f, false, style = Stroke(4.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round))
+            drawArc(Accent, rotation, 270f, false, style = Stroke(4.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round))
         }
         Text("Buffering…", color = Cloud, fontSize = 14.sp)
     }
@@ -358,7 +358,7 @@ private fun OverlayIcon(label: String, glyph: String, focus: FocusRequester, foc
         .semantics { contentDescription = label }.onPreviewKeyEvent { event ->
             if (event.type == KeyEventType.KeyDown && (event.key == Key.DirectionLeft || event.key == Key.DirectionRight)) { horizontal(event.key == Key.DirectionRight); true } else false
         }, contentPadding = PaddingValues(10.dp), shape = ButtonDefaults.shape(shape = RoundedCornerShape(50)),
-        colors = ButtonDefaults.colors(containerColor = Color.Black.copy(alpha = .5f), focusedContainerColor = Cloud, contentColor = Cloud, focusedContentColor = Ink)) {
+        colors = ButtonDefaults.colors(containerColor = Color.Black.copy(alpha = .5f), focusedContainerColor = Accent, contentColor = Cloud, focusedContentColor = Ink)) {
         if (glyph == "captions") Text("CC", color = if (selected) Ink else Cloud, fontSize = 13.sp, fontWeight = FontWeight.Bold,
             modifier = Modifier.clearAndSetSemantics {}.border(1.dp, if (selected) Ink else Cloud, RoundedCornerShape(3.dp)).padding(horizontal = 2.dp))
         else PlaybackGlyph(glyph, if (selected) Ink else Cloud, Modifier.size(22.dp))
@@ -388,7 +388,7 @@ private fun PlaybackGlyph(kind: String, tint: Color, modifier: Modifier) = Canva
 private fun CompactVideoCard(video: VideoSummary, modifier: Modifier, play: () -> Unit) {
     var selected by remember { mutableStateOf(false) }
     Button(onClick = play, modifier = modifier.width(200.dp).height(156.dp).onFocusChanged { selected = it.isFocused }
-        .border(if (selected) 2.dp else 0.dp, if (selected) Mint else Color.Transparent, RoundedCornerShape(10.dp)),
+        .border(if (selected) 2.dp else 0.dp, if (selected) Accent else Color.Transparent, RoundedCornerShape(10.dp)),
         contentPadding = PaddingValues(0.dp), shape = ButtonDefaults.shape(shape = RoundedCornerShape(10.dp)),
         scale = ButtonDefaults.scale(focusedScale = 1f), colors = ButtonDefaults.colors(containerColor = Panel, focusedContainerColor = Panel, contentColor = Cloud, focusedContentColor = Cloud)) {
         Column {
