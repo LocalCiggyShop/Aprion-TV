@@ -69,11 +69,12 @@ class PlayerOverlayContractTest {
     @Test fun recommendationFeedbackMenuDoesNotPlayOrSeekAndRestoresShelfFocus() {
         withFixture { host ->
             var selected: RecommendationFeedback? = null; var saves = 0; var opens = 0; var position = 30_000L
+            var expectedId = video(91).id
             onMain { host.setContent { MaterialTheme {
                 PlayerOverlay(PlayerOverlayInfo(video(90), position, 120_000, false, false, "Paused", hasPlan = true, canSeek = true),
                     BrowseRow(null, listOf(video(91), video(92)), loaded = true, recommended = true),
                     {}, {}, {}, {}, { position += it }, { _, _ -> opens++ }, {}, {}, { emptyList() }, { emptyList() },
-                    feedback = { target, action -> assertEquals(video(91).id, target.id); selected = action; saves++ })
+                    feedback = { target, action -> assertEquals(expectedId, target.id); selected = action; saves++ })
             } } }
             await { focused().contains("Play video") }
             key(KeyEvent.KEYCODE_DPAD_DOWN); await { focused().contains("Recommendation 91") }
@@ -94,8 +95,15 @@ class PlayerOverlayContractTest {
             instrument.sendKeySync(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 2))
             instrument.sendKeySync(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 3,
                 0, -1, 0, KeyEvent.FLAG_LONG_PRESS))
+            // Some TV remotes report repeats as fresh downs, even resetting downTime.
+            instrument.sendKeySync(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+            val repeated = SystemClock.uptimeMillis()
+            instrument.sendKeySync(KeyEvent(repeated, repeated, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+            assertFalse(text().contains("Saved:")); assertEquals(1, saves)
             instrument.sendKeySync(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, 0))
             Thread.sleep(1100); assertTrue(text().contains("Tune recommendations")); assertFalse(text().contains("Saved:")); assertEquals(1, saves)
+            onMain { expectedId = video(92).id }
+            key(KeyEvent.KEYCODE_DPAD_CENTER); await { saves == 2 && selected == RecommendationFeedback.MORE && text().contains("Saved:") }
             assertEquals(0, opens)
             key(KeyEvent.KEYCODE_BACK); await { focused().contains("Recommendation 92") }
         }

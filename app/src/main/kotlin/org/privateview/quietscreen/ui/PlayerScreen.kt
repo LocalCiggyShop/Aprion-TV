@@ -35,6 +35,7 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
     recommendations: org.privateview.quietscreen.presentation.BrowseViewModel? = null,
     feedback: (VideoSummary, RecommendationFeedback) -> Unit = { _, _ -> },
     metadata: (VideoSummary) -> Unit = {},
+    openChannel: ((VideoSummary) -> Unit)? = null,
     playNext: (VideoSummary, Genre?) -> Unit = { _, _ -> }, back: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -63,7 +64,8 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
         ?: GenreClassifier.classify(video.copy(title = controller.plan?.title ?: video.title))
     fun leavePlayer() { exit.release(); back() }
     LaunchedEffect(video.id, controller.plan) {
-        controller.plan?.uploadedAtMs?.let { recordMetadata(video.copy(uploadedAtMs = it)) }
+        controller.plan?.let { plan -> recordMetadata(video.copy(uploadedAtMs = plan.uploadedAtMs ?: video.uploadedAtMs,
+            channelId = plan.channelId ?: video.channelId, channel = plan.channel?.takeIf { it.isNotBlank() } ?: video.channel)) }
         recommendations?.context(video.copy(title = controller.plan?.title ?: video.title), controller.plan?.related.orEmpty())
     }
 
@@ -142,7 +144,12 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
             back = ::leavePlayer, retry = { if (!released) controller.start(video.id, settings.maxHeight, startPositionMs = position.takeIf { it > 0 } ?: startPositionMs) },
             qualityChoices = { listOf("Auto (up to ${settings.maxHeight}p)" to { controller.selectQuality(null, settings.maxHeight) }) +
                 controller.qualityHeights().map { height -> "${height}p" to { controller.selectQuality(height, settings.maxHeight) } } },
-            audioChoices = { controller.audioChoices().map { choice -> (choice.label + if (choice.selected) " ✓" else "") to { controller.selectAudio(choice.key) } } }, feedback = feedback)
+            audioChoices = { controller.audioChoices().map { choice -> (choice.label + if (choice.selected) " ✓" else "") to { controller.selectAudio(choice.key) } } }, feedback = feedback,
+            openChannel = openChannel?.let { open -> { target -> if (!released) {
+                val resolved = if (target.id == video.id) target.copy(channelId = controller.plan?.channelId ?: target.channelId,
+                    channel = controller.plan?.channel?.takeIf { it.isNotBlank() } ?: target.channel) else target
+                exit.release(); open(resolved)
+            } } })
     }
 }
 

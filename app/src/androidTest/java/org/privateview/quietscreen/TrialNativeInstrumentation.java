@@ -82,6 +82,18 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             } else if ("searchHistory".equals(check)) {
                 searchHistory(); passed++;
                 result.putString("stream", "\nOK (1 search history check)\n");
+            } else if ("tuneRemote".equals(check) || "tuneRemoteReset".equals(check)) {
+                tuneRemote("tuneRemoteReset".equals(check)); passed++;
+                result.putString("stream", "\nOK (1 remote tuning check)\n");
+            } else if ("channelHome".equals(check)) {
+                channelHome(); passed++;
+                result.putString("stream", "\nOK (1 Home channel check)\n");
+            } else if ("channelPlayer".equals(check)) {
+                channelPlayer(); passed++;
+                result.putString("stream", "\nOK (1 player channel check)\n");
+            } else if ("channelReturn".equals(check)) {
+                channelReturn(); passed++;
+                result.putString("stream", "\nOK (1 return channel check)\n");
             } else if ("uploadAge".equals(check)) {
                 uploadAge(); passed++;
                 result.putString("stream", "\nOK (1 upload-age check)\n");
@@ -109,6 +121,9 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             }
             result.putInt("passed", passed);
         } catch (Throwable failure) {
+            if ("channelHome".equals(check) || "channelPlayer".equals(check) || "channelReturn".equals(check)) {
+                try { capturePlayer("/data/local/tmp/aprion-channel-failure.png"); } catch (Exception ignored) { }
+            }
             result.putString("stream", "\nFAIL after " + passed + " checks: " + failure + "\n");
             result.putString("failure", failure.toString());
             result.putInt("passed", passed);
@@ -137,6 +152,152 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         finish(resultCode, result);
     }
     private void require(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
+    // Selectable channel checks reuse the framework-only runner and cleanup above.
+    private String boundedLabel(AccessibilityNodeInfo button) {
+        android.graphics.Rect bounds = new android.graphics.Rect(); button.getBoundsInScreen(bounds);
+        StringBuilder value = new StringBuilder(label(button));
+        for (AccessibilityNodeInfo node : nodes()) {
+            android.graphics.Rect textBounds = new android.graphics.Rect(); node.getBoundsInScreen(textBounds);
+            if (node.isVisibleToUser() && node.getText() != null && !textBounds.isEmpty() && bounds.contains(textBounds))
+                value.append(' ').append(node.getText());
+        }
+        return value.toString();
+    }
+    private AccessibilityNodeInfo channelButton(String title, boolean exact) {
+        for (AccessibilityNodeInfo node : nodes()) if (node.isClickable() && node.isVisibleToUser() &&
+            (exact ? label(node).trim().equals(title) || title.contentEquals(node.getContentDescription() == null ? "" : node.getContentDescription()) ||
+                title.contentEquals(node.getText() == null ? "" : node.getText()) : boundedLabel(node).contains(title))) return node;
+        return null;
+    }
+    private void focusChannelButton(String title, boolean exact) {
+        AccessibilityNodeInfo button = channelButton(title, exact);
+        require(button != null && button.performAction(AccessibilityNodeInfo.ACTION_FOCUS), "Channel target focus unavailable: " + title);
+        SystemClock.sleep(300);
+        button = channelButton(title, exact);
+        require(button != null && button.isFocused(), "Channel target focus not verified: " + title);
+    }
+    private void clickChannelButton(String title) {
+        focusChannelButton(title, true); key(KeyEvent.KEYCODE_DPAD_CENTER);
+    }
+    private void waitChannelPage(int page) {
+        long deadline = SystemClock.elapsedRealtime() + 65_000;
+        String expected = "Newest first · Page " + page;
+        while (SystemClock.elapsedRealtime() < deadline) {
+            String state = texts();
+            if (state.contains(expected) && !state.contains("Loading channel…")) return;
+            require(!state.contains("Try again"), "Channel loading failed: " + state.substring(0, Math.min(500, state.length())));
+            SystemClock.sleep(300);
+        }
+        throw new AssertionError("Channel page " + page + " unavailable");
+    }
+    private void channelHome() throws Exception {
+        // Seed only owned-emulator data; an absent channel ID exercises exact-video
+        // uploader resolution. The runner restores the original records in finally.
+        org.json.JSONObject video = new org.json.JSONObject().put("id", "dQw4w9WgXcQ")
+            .put("title", "Channel navigation fixture").put("channel", "Rick Astley").put("channelId", "")
+            .put("position", 1000).put("duration", 212000).put("uploadedAt", 1);
+        getTargetContext().getSharedPreferences("continue_watching", 0).edit().putString("records",
+            new org.json.JSONObject().put("videos", new org.json.JSONArray().put(video)).put("finished", new org.json.JSONArray()).toString()).commit();
+        launch();
+        for (int attempt = 0; attempt < 8 && channelButton("Channel navigation fixture", false) == null; attempt++) {
+            for (AccessibilityNodeInfo node : nodes()) if (node.isScrollable()) { node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD); break; }
+            SystemClock.sleep(400);
+        }
+        focusChannelButton("Channel navigation fixture", false);
+        for (int code : new int[] {KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER}) {
+            long down = SystemClock.uptimeMillis();
+            require(ui().injectInputEvent(new KeyEvent(down, down, KeyEvent.ACTION_DOWN, code, 0), true), "Channel hold down rejected");
+            SystemClock.sleep(600);
+            require(ui().injectInputEvent(new KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_DOWN, code, 1, 0, -1, 0, KeyEvent.FLAG_LONG_PRESS), true), "Channel hold rejected");
+            waitFor("Video options", 10, false); waitFocused("More like this");
+            require(ui().injectInputEvent(new KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_DOWN, code, 2), true), "Channel repeat rejected");
+            require(ui().injectInputEvent(new KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0), true), "Channel hold release rejected");
+            SystemClock.sleep(350);
+            require(texts().contains("Video options") && !texts().contains("Saved:") && !texts().contains("Channel videos"), "Opening hold activated an action");
+            if (code == KeyEvent.KEYCODE_DPAD_CENTER) {
+                key(KeyEvent.KEYCODE_BACK); focusChannelButton("Channel navigation fixture", false);
+            }
+        }
+        // View channel is adjacent to existing recommendation feedback; a fresh press is required.
+        key(KeyEvent.KEYCODE_DPAD_DOWN); waitFocused("Not interested");
+        key(KeyEvent.KEYCODE_DPAD_DOWN); waitFocused("Don't recommend this channel");
+        key(KeyEvent.KEYCODE_DPAD_DOWN); waitFocused("View channel");
+        capturePlayer("/data/local/tmp/aprion-channel-options.png");
+        key(KeyEvent.KEYCODE_DPAD_CENTER); waitChannelPage(1);
+        require(texts().contains("Rick Astley"), "Missing-ID resolution opened the wrong channel");
+        capturePlayer("/data/local/tmp/aprion-channel-home.png");
+        key(KeyEvent.KEYCODE_BACK); waitFor("Search videos", 15, false);
+        AccessibilityNodeInfo restored = channelButton("Channel navigation fixture", false);
+        require(restored != null && restored.isFocused(), "Channel Back lost the originating Home card");
+        marker("CHANNEL_HOME heldDpadAndEnter=true openingReleaseIgnored=true freshMenuAction=true missingIdResolved=true exactChannel=true HomeFocusRestored=true");
+    }
+    private void channelPlayer() throws Exception {
+        search("dQw4w9WgXcQ"); waitFor("Never Gonna Give You Up", 60, false);
+        openPinnedResult("Never Gonna Give You Up", true); waitFor("Playback Playing", 75, true);
+        observePlayback(2); key(KeyEvent.KEYCODE_MEDIA_PAUSE); waitFor("Playback Paused", 10, true);
+        focusChannelButton("View channel", true);
+        android.graphics.Rect channel = new android.graphics.Rect(), captions = new android.graphics.Rect();
+        channelButton("View channel", true).getBoundsInScreen(channel);
+        require(channelButton("Captions", true) != null, "CC control missing");
+        channelButton("Captions", true).getBoundsInScreen(captions);
+        require(channel.right <= captions.left, "Channel button was not left of CC");
+        key(KeyEvent.KEYCODE_DPAD_RIGHT); if (focused().contains("View channel")) key(KeyEvent.KEYCODE_DPAD_RIGHT); waitFocused("Captions");
+        key(KeyEvent.KEYCODE_DPAD_LEFT); waitFocused("View channel");
+        capturePlayer("/data/local/tmp/aprion-channel-player.png");
+        key(KeyEvent.KEYCODE_DPAD_CENTER); waitChannelPage(1);
+        require((activity.getWindow().getAttributes().flags & android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) == 0, "Channel navigation retained the player window flag");
+        org.json.JSONArray saved = new org.json.JSONObject(getTargetContext().getSharedPreferences("continue_watching", 0).getString("records", "{}")).optJSONArray("videos");
+        boolean positionSaved = false;
+        if (saved != null) for (int i = 0; i < saved.length(); i++)
+            if ("dQw4w9WgXcQ".equals(saved.getJSONObject(i).optString("id"))) positionSaved = saved.getJSONObject(i).optLong("position") >= 1000;
+        require(positionSaved, "Channel navigation did not save the stopped video's position");
+        marker("CHANNEL_PLAYER buttonLeftOfCC=true remoteLeftRight=true playerReleased=true savedPosition=true");
+        clickChannelButton("Older videos"); waitChannelPage(2);
+        capturePlayer("/data/local/tmp/aprion-channel-older.png");
+        clickChannelButton("Newer videos"); waitChannelPage(1);
+        marker("CHANNEL_PAGING older=true cachedNewer=true");
+        channelUploadReturn();
+        key(KeyEvent.KEYCODE_BACK); waitFor("Search videos", 15, false);
+    }
+    private void channelReturn() throws Exception {
+        org.json.JSONObject video = new org.json.JSONObject().put("id", "dQw4w9WgXcQ")
+            .put("title", "Channel return fixture").put("channel", "Rick Astley").put("channelId", "UCuAXFkgsw1L7xaCfnd5JJOw")
+            .put("position", 1000).put("duration", 212000).put("uploadedAt", 1);
+        getTargetContext().getSharedPreferences("continue_watching", 0).edit().putString("records",
+            new org.json.JSONObject().put("videos", new org.json.JSONArray().put(video)).put("finished", new org.json.JSONArray()).toString()).commit();
+        launch();
+        for (int attempt = 0; attempt < 8 && channelButton("Channel return fixture", false) == null; attempt++) {
+            for (AccessibilityNodeInfo node : nodes()) if (node.isScrollable()) { node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD); break; }
+            SystemClock.sleep(400);
+        }
+        focusChannelButton("Channel return fixture", false); key(KeyEvent.KEYCODE_MENU);
+        waitFor("Video options", 10, false); clickChannelButton("View channel"); waitChannelPage(1);
+        channelUploadReturn();
+        key(KeyEvent.KEYCODE_BACK); waitFor("Search videos", 15, false);
+    }
+    private void channelUploadReturn() throws Exception {
+        String pinned = null;
+        long deadline = SystemClock.elapsedRealtime() + 5000;
+        while (pinned == null && SystemClock.elapsedRealtime() < deadline) {
+            // Compose can expose a card's title/description as sibling semantics
+            // nodes rather than on the clickable node. Bind visible title text to
+            // its containing button, then verify focus before playing that title.
+            for (AccessibilityNodeInfo node : nodes()) if (node.isVisibleToUser() && node.getText() != null &&
+                node.getText().toString().startsWith("Rick Astley - ") && channelButton(node.getText().toString(), false) != null) {
+                pinned = node.getText().toString(); break;
+            }
+            if (pinned == null) SystemClock.sleep(100);
+        }
+        require(pinned != null && !pinned.isEmpty(), "No channel upload available to pin");
+        focusChannelButton(pinned, false); key(KeyEvent.KEYCODE_DPAD_CENTER);
+        waitFor("Playback Playing", 75, true); observePlayback(1); key(KeyEvent.KEYCODE_MEDIA_PAUSE);
+        waitFor("Playback Paused", 10, true);
+        key(KeyEvent.KEYCODE_BACK); waitPlayerHidden(); key(KeyEvent.KEYCODE_BACK); waitChannelPage(1);
+        AccessibilityNodeInfo returned = channelButton(pinned, false);
+        require(returned != null && returned.isFocused(), "Playback Back lost the exact channel upload focus");
+        capturePlayer("/data/local/tmp/aprion-channel-return.png");
+        marker("CHANNEL_RETURN pinnedUpload=true realPlayback=true channelPageRetained=true exactFocusRestored=true");
+    }
     private void marker(String text) { Bundle status = new Bundle(); status.putString("stream", text + "\n"); sendStatus(0, status); }
     private UiAutomation ui() {
         if (automation == null) {
@@ -302,12 +463,40 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         require(ui().injectInputEvent(new KeyEvent(down,down,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_CENTER,0),true),"Hold down rejected");
         SystemClock.sleep(600);
         require(ui().injectInputEvent(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_CENTER,1,0,-1,0,KeyEvent.FLAG_LONG_PRESS),true),"Hold event rejected");
-        waitFor("Tune recommendations",10,false); waitFocused("More like this");
+        waitFor("Video options",10,false); waitFocused("More like this");
         require(ui().injectInputEvent(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_CENTER,2),true),"Repeat rejected");
         require(ui().injectInputEvent(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_CENTER,3,0,-1,0,KeyEvent.FLAG_LONG_PRESS),true),"Flagged repeat rejected");
         require(ui().injectInputEvent(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_UP,KeyEvent.KEYCODE_DPAD_CENTER,0),true),"Hold release rejected");
         SystemClock.sleep(1100);
-        require(texts().contains("Tune recommendations") && !texts().contains("Saved:"),"Opening hold selected or dismissed feedback");
+        require(texts().contains("Video options") && !texts().contains("Saved:"),"Opening hold selected or dismissed feedback");
+    }
+    private void tuneRemote(boolean resetRepeats) {
+        launch(); key(KeyEvent.KEYCODE_DPAD_RIGHT);
+        long until=SystemClock.elapsedRealtime()+60000;
+        while(SystemClock.elapsedRealtime()<until && datedFocusBounds()==null) SystemClock.sleep(200);
+        require(datedFocusBounds()!=null,"Recommendation card not focused");
+        for(int code:new int[]{KeyEvent.KEYCODE_DPAD_CENTER,KeyEvent.KEYCODE_ENTER}) {
+            long down=SystemClock.uptimeMillis();
+            require(ui().injectInputEvent(new KeyEvent(down,down,KeyEvent.ACTION_DOWN,code,0),true),"Remote down rejected");
+            SystemClock.sleep(600);
+            require(ui().injectInputEvent(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_DOWN,code,1,0,-1,0,KeyEvent.FLAG_LONG_PRESS),true),"Remote hold rejected");
+            waitFor("Video options",10,false); waitFocused("More like this");
+            require(ui().injectInputEvent(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_DOWN,code,2),true),"Remote repeat rejected");
+            if(resetRepeats) {
+                long repeat=SystemClock.uptimeMillis();
+                require(ui().injectInputEvent(new KeyEvent(repeat,repeat,KeyEvent.ACTION_DOWN,code,0),true),"Reset repeat rejected");
+            }
+            SystemClock.sleep(600); require(!texts().contains("Saved:"),"Holding remote OK selected feedback");
+            require(ui().injectInputEvent(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_UP,code,0),true),"Remote release rejected");
+            SystemClock.sleep(700); require(texts().contains("Video options") && !texts().contains("Saved:"),"Remote release selected feedback");
+            key(code); waitFor("Saved: More like this",10,false);
+            key(KeyEvent.KEYCODE_BACK);
+            until=SystemClock.elapsedRealtime()+10000;
+            while(SystemClock.elapsedRealtime()<until && (texts().contains("Video options") || datedFocusBounds()==null)) SystemClock.sleep(100);
+            require(!texts().contains("Video options") && datedFocusBounds()!=null,"Remote Back did not restore the recommendation");
+            marker("TUNE_REMOTE_KEY code="+code+" resetRepeats="+resetRepeats+" heldNoAction=true releasedNoAction=true freshClick=true back=true");
+        }
+        marker("TUNE_REMOTE dpadCenter=true enter=true resetRepeats="+resetRepeats+" releaseIgnored=true freshClickRequired=true backRestoresFocus=true");
     }
     private void uploadAge() throws Exception {
         search("dQw4w9WgXcQ"); waitFor("Never Gonna Give You Up",60,false);
@@ -325,12 +514,12 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         holdTune();
         require(hasUploadAge() || texts().contains("Upload date unavailable"),"Feedback omitted upload metadata");
         key(KeyEvent.KEYCODE_DPAD_CENTER); waitFor("Saved:",10,false);
-        SystemClock.sleep(1100); require(texts().contains("Tune recommendations"),"Feedback action dismissed dialog before Back");
+        SystemClock.sleep(1100); require(texts().contains("Video options"),"Feedback action dismissed dialog before Back");
         capturePlayer("/data/local/tmp/aprion-recommendations-v2-feedback.png");
         key(KeyEvent.KEYCODE_BACK);
         until=SystemClock.elapsedRealtime()+10000;
-        while(SystemClock.elapsedRealtime()<until && (texts().contains("Tune recommendations") || !shelfFocus.equals(datedFocusBounds()))) SystemClock.sleep(100);
-        require(!texts().contains("Tune recommendations") && shelfFocus.equals(datedFocusBounds()),"Feedback did not restore the same dated related card");
+        while(SystemClock.elapsedRealtime()<until && (texts().contains("Video options") || !shelfFocus.equals(datedFocusBounds()))) SystemClock.sleep(100);
+        require(!texts().contains("Video options") && shelfFocus.equals(datedFocusBounds()),"Feedback did not restore the same dated related card");
         key(KeyEvent.KEYCODE_BACK); key(KeyEvent.KEYCODE_BACK); waitFor("Search videos",10,false);
         org.json.JSONObject records=new org.json.JSONObject(getTargetContext().getSharedPreferences("continue_watching",0).getString("records","{}"));
         org.json.JSONArray videos=records.optJSONArray("videos");boolean persisted=false;
@@ -341,8 +530,8 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         while(SystemClock.elapsedRealtime()<until && datedFocusBounds()==null) SystemClock.sleep(200);
         require(datedFocusBounds()!=null,"Home recommendation not focused");
         holdTune(); key(KeyEvent.KEYCODE_DPAD_CENTER); waitFor("Saved:",10,false);
-        SystemClock.sleep(1100); require(texts().contains("Tune recommendations"),"Home feedback dismissed before Back");
-        key(KeyEvent.KEYCODE_BACK); require(!texts().contains("Tune recommendations"),"Home Back did not dismiss feedback");
+        SystemClock.sleep(1100); require(texts().contains("Video options"),"Home feedback dismissed before Back");
+        key(KeyEvent.KEYCODE_BACK); require(!texts().contains("Video options"),"Home Back did not dismiss feedback");
         capturePlayer("/data/local/tmp/aprion-upload-age-home.png");
         marker("UPLOAD_AGE_NATIVE search=true player=true relatedShelf=true feedback=true resumeDatePersisted=true minifiedMetadata=true playbackStopped=true holdRepeats=true actions=true HomeAndPlayerBack=true");
     }
@@ -618,7 +807,10 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             path.equals("/data/local/tmp/aprion-v037-update-modal.png") ||
             path.equals("/data/local/tmp/aprion-upload-age-search.png") ||
             path.equals("/data/local/tmp/aprion-upload-age-player.png") ||
-            path.equals("/data/local/tmp/aprion-upload-age-home.png"), "Unexpected screenshot destination");
+            path.equals("/data/local/tmp/aprion-upload-age-home.png") ||
+            path.equals("/data/local/tmp/aprion-channel-options.png") || path.equals("/data/local/tmp/aprion-channel-home.png") ||
+            path.equals("/data/local/tmp/aprion-channel-player.png") || path.equals("/data/local/tmp/aprion-channel-older.png") ||
+            path.equals("/data/local/tmp/aprion-channel-return.png") || path.equals("/data/local/tmp/aprion-channel-failure.png"), "Unexpected screenshot destination");
         try (android.os.ParcelFileDescriptor.AutoCloseInputStream command = new android.os.ParcelFileDescriptor.AutoCloseInputStream(ui().executeShellCommand("screencap -p " + path))) {
             byte[] buffer = new byte[1024]; int total = 0, read;
             while ((read = command.read(buffer)) >= 0) { total += read; require(total <= 8192, "Screenshot command output exceeded bound"); }
@@ -639,7 +831,7 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         if (focused().contains("Captions") || focused().contains("Settings")) key(KeyEvent.KEYCODE_DPAD_DOWN);
         waitFocused("Play video");
         long before = playbackSeconds();
-        key(KeyEvent.KEYCODE_DPAD_RIGHT); waitFocused("Captions"); waitPosition(before);
+        key(KeyEvent.KEYCODE_DPAD_RIGHT); if (focused().contains("View channel")) key(KeyEvent.KEYCODE_DPAD_RIGHT); waitFocused("Captions"); waitPosition(before);
         key(KeyEvent.KEYCODE_DPAD_RIGHT); waitFocused("Settings"); waitPosition(before);
         key(KeyEvent.KEYCODE_DPAD_RIGHT); waitFocused("Play video");
         key(KeyEvent.KEYCODE_BACK); waitPlayerHidden();
@@ -648,7 +840,7 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         key(KeyEvent.KEYCODE_BACK); waitPlayerHidden(); key(KeyEvent.KEYCODE_DPAD_LEFT);
         key(KeyEvent.KEYCODE_DPAD_CENTER); waitFocused("Play video"); waitPosition(before);
         SystemClock.sleep(1100); capturePlayer("/data/local/tmp/quietscreen-player-controls.png");
-        key(KeyEvent.KEYCODE_DPAD_RIGHT); waitFocused("Captions");
+        key(KeyEvent.KEYCODE_DPAD_RIGHT); if (focused().contains("View channel")) key(KeyEvent.KEYCODE_DPAD_RIGHT); waitFocused("Captions");
         key(KeyEvent.KEYCODE_DPAD_CENTER); waitFor("Captions aren't available in this version yet.", 10, false);
         key(KeyEvent.KEYCODE_BACK); waitPlayerHidden();
         key(KeyEvent.KEYCODE_DPAD_UP); waitFocused("Captions");

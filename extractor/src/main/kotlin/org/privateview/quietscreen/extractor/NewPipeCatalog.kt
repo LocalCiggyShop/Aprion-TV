@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
 import org.privateview.quietscreen.core.*
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.Page
+import org.schabi.newpipe.extractor.channel.tabs.ChannelTabs
 import org.schabi.newpipe.extractor.exceptions.*
 import org.schabi.newpipe.extractor.localization.ContentCountry
 import org.schabi.newpipe.extractor.localization.Localization
@@ -21,7 +22,7 @@ import java.net.SocketTimeoutException
 import java.util.UUID
 import kotlin.coroutines.coroutineContext
 
-class NewPipeCatalog : VideoCatalog, StreamResolver {
+class NewPipeCatalog : VideoCatalog, StreamResolver, ChannelCatalog {
     private val downloader = NewPipeDownloader()
     private val pages = LinkedHashMap<String, Pair<String, Page>>()
     private val channelPath = Regex("/channel/(UC[A-Za-z0-9_-]{22})(?:$|[/?])")
@@ -100,6 +101,40 @@ class NewPipeCatalog : VideoCatalog, StreamResolver {
         }
     }
 
+    override suspend fun channelForVideo(id: VideoId): ChannelId = extract {
+        val e = NewPipe.getService("YouTube").getStreamExtractor("https://www.youtube.com/watch?v=${id.value}")
+        e.fetchPage()
+        if (e.ageLimit > 0) throw AppException(ErrorCode.RESTRICTED)
+        val uploader = channelPath.find(e.uploaderUrl.orEmpty())?.groupValues?.get(1)
+            ?: throw AppException(ErrorCode.UNAVAILABLE)
+        ChannelId(uploader)
+    }
+
+    override suspend fun channel(id: ChannelId, cursor: String?): CatalogPage = extract {
+        val key = "channel\u0000${id.value}\u0000videos"
+        // The Videos tab requests the provider's default Latest feed, not search relevance.
+        // Shorts and Streams are separate tabs and are deliberately not requested.
+        val e = NewPipe.getService("YouTube").getChannelTabExtractorFromId("channel/${id.value}", ChannelTabs.VIDEOS)
+        val page = if (cursor == null) {
+            e.fetchPage()
+            if (e.id != id.value) throw AppException(ErrorCode.UPSTREAM_CHANGED)
+            e.initialPage
+        } else {
+            val stored = pages[cursor] ?: throw AppException(ErrorCode.UPSTREAM_CHANGED)
+            if (stored.first != key) throw AppException(ErrorCode.UPSTREAM_CHANGED)
+            e.getPage(stored.second)
+        }
+        val items = page.items.filterIsInstance<StreamInfoItem>().take(50).mapNotNull(::summary)
+            .filterNot { it.live }.map { it.copy(channelId = id.value) }.distinctBy { it.id }
+        val next = page.nextPage
+        val token = if (next != null && Page.isValid(next)) UUID.randomUUID().toString().also {
+            pages[it] = key to next
+            while (pages.size > 16) pages.remove(pages.keys.first())
+        } else null
+        // Preserve provider order here so live verification checks the actual Latest feed.
+        CatalogPage(items, token)
+    }
+
     override suspend fun resolve(id: VideoId): PlaybackPlan = extract {
         val e = NewPipe.getService("YouTube").getStreamExtractor("https://www.youtube.com/watch?v=${id.value}")
         e.fetchPage()
@@ -133,7 +168,9 @@ class NewPipeCatalog : VideoCatalog, StreamResolver {
             .take(32).mapNotNull(::summary).filterNot { it.id == id || it.live }.distinctBy { it.id } }.getOrDefault(emptyList())
         PlaybackPlan(id, e.name.take(500), e.length.coerceAtLeast(0) * 1000, System.currentTimeMillis(), videos, audio, hls, dash, captions,
             genre = runCatching { GenreClassifier.providerCategory(e.category) }.getOrNull(), related = related,
-            uploadedAtMs = runCatching { e.uploadDate?.instant?.toEpochMilli()?.takeIf { it > 0 } }.getOrNull())
+            uploadedAtMs = runCatching { e.uploadDate?.instant?.toEpochMilli()?.takeIf { it > 0 } }.getOrNull(),
+            channelId = runCatching { channelPath.find(e.uploaderUrl.orEmpty())?.groupValues?.get(1) }.getOrNull(),
+            channel = runCatching { e.uploaderName?.take(200) }.getOrNull())
     }
 
     companion object { private val mutex = Mutex() }

@@ -54,7 +54,8 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
     togglePlayback: () -> Unit, setPlaying: (Boolean) -> Unit, seek: (Long) -> Unit,
     playNext: (VideoSummary, Genre?) -> Unit, back: () -> Unit, retry: () -> Unit,
     qualityChoices: () -> List<Pair<String, () -> Unit>>, audioChoices: () -> List<Pair<String, () -> Unit>>,
-    feedback: (VideoSummary, RecommendationFeedback) -> Unit = { _, _ -> }) {
+    feedback: (VideoSummary, RecommendationFeedback) -> Unit = { _, _ -> },
+    openChannel: ((VideoSummary) -> Unit)? = null) {
     var visible by remember(info.video.id) { mutableStateOf(true) }
     var area by remember(info.video.id) { mutableStateOf(PlayerArea.TRANSPORT) }
     var menu by remember(info.video.id) { mutableStateOf<String?>(null) }
@@ -65,6 +66,7 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
     val videoFocus = remember { FocusRequester() }
     val transportFocus = remember { FocusRequester() }
     val captionsFocus = remember { FocusRequester() }
+    val channelFocus = remember { FocusRequester() }
     val settingsFocus = remember { FocusRequester() }
     val retryFocus = remember { FocusRequester() }
     val shelfAction = remember { FocusRequester() }
@@ -78,6 +80,7 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
     var shelfIndex by remember { mutableIntStateOf(0) }
     var waitingForCard by remember { mutableStateOf(false) }
     var feedbackVideo by remember(info.video.id) { mutableStateOf<VideoSummary?>(null) }
+    var feedbackPress by remember(info.video.id) { mutableStateOf<RecommendationMenuPress?>(null) }
     val cards = if (area == PlayerArea.RECOMMENDATIONS && pinnedCards.isNotEmpty()) pinnedCards else rawCards
     val currentArea by rememberUpdatedState(area)
     fun freezeShelf() { pinnedCards = rawCards; pinnedOrigins = row.origins.filterKeys { key -> rawCards.any { it.id.value == key } } }
@@ -133,7 +136,11 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
             repeat(2) { withFrameNanos { } }
             when {
                 !overlayVisible -> videoFocus.requestFocus()
-                area == PlayerArea.OPTIONS -> if (lastOption == "settings") settingsFocus.requestFocus() else captionsFocus.requestFocus()
+                area == PlayerArea.OPTIONS -> when (lastOption) {
+                    "settings" -> settingsFocus.requestFocus()
+                    "channel" -> channelFocus.requestFocus()
+                    else -> captionsFocus.requestFocus()
+                }
                 area == PlayerArea.TRANSPORT || area == PlayerArea.VIDEO -> transportFocus.requestFocus()
             }
         }
@@ -185,7 +192,9 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
                         PlayerRemoteAction.HIDE_CONTROLS -> { hideControls(); true }
                         PlayerRemoteAction.NAVIGATE -> if (menu == null && area == PlayerArea.TRANSPORT &&
                             (direction == PlayerDirection.LEFT || direction == PlayerDirection.RIGHT)) {
-                            area = PlayerArea.OPTIONS; lastOption = if (direction == PlayerDirection.RIGHT) "captions" else "settings"
+                            area = PlayerArea.OPTIONS; lastOption = if (direction == PlayerDirection.RIGHT) {
+                                if (openChannel != null) "channel" else "captions"
+                            } else "settings"
                             true
                         } else false
                     } else if (!overlayVisible && (event.key == Key.DirectionCenter || event.key == Key.Enter)) { showTransport(); true } else false
@@ -225,8 +234,11 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
                 }
                 Spacer(Modifier.width(24.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (openChannel != null) OverlayIcon("View channel", "channel", channelFocus,
+                        focused = { if (it) { area = PlayerArea.OPTIONS; lastOption = "channel" } },
+                        horizontal = { right -> if (right) captionsFocus.requestFocus() else showTransport() }) { openChannel(info.video) }
                     OverlayIcon("Captions", "captions", captionsFocus, focused = { if (it) { area = PlayerArea.OPTIONS; lastOption = "captions" } },
-                        horizontal = { right -> if (right) settingsFocus.requestFocus() else showTransport() }) { lastOption = "captions"; menu = "captions"; area = PlayerArea.MENU }
+                        horizontal = { right -> if (right) settingsFocus.requestFocus() else if (openChannel != null) channelFocus.requestFocus() else showTransport() }) { lastOption = "captions"; menu = "captions"; area = PlayerArea.MENU }
                     OverlayIcon("Settings", "settings", settingsFocus, focused = { if (it) { area = PlayerArea.OPTIONS; lastOption = "settings" } },
                         horizontal = { right -> if (right) showTransport() else captionsFocus.requestFocus() }) { lastOption = "settings"; menu = "settings"; area = PlayerArea.MENU }
                 }
@@ -246,12 +258,12 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
                 Text("Recommended" + if (row.contextual) " · ${row.hint}" else "", color = Cloud, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Text(if (area == PlayerArea.RECOMMENDATIONS) "↑ Playback · OK Watch · Hold OK / Menu Tune" else "↓ Explore videos", color = Muted, fontSize = 11.sp)
             }
-            LazyRow(state = shelf, modifier = Modifier.fillMaxWidth().height(if (area == PlayerArea.RECOMMENDATIONS) 186.dp else 68.dp),
+            LazyRow(state = shelf, modifier = Modifier.fillMaxWidth().height(if (area == PlayerArea.RECOMMENDATIONS) 206.dp else 68.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(4.dp)) {
                 itemsIndexed(cards, key = { _, video -> video.id.value }) { index, video ->
                     val focus = remember(video.id) { FocusRequester() }
                     DisposableEffect(video.id) { cardsFocus[video.id.value] = focus; onDispose { cardsFocus.remove(video.id.value) } }
-                    CompactVideoCard(video, Modifier.focusRequester(focus).recommendationMenu { feedbackVideo = video }
+                    CompactVideoCard(video, Modifier.focusRequester(focus).recommendationMenu { feedbackPress = it; feedbackVideo = video }
                         .onFocusChanged { if (it.isFocused) { area = PlayerArea.RECOMMENDATIONS; shelfIndex = index } }
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) false else when (event.key) {
@@ -304,7 +316,8 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
         }
     }
     feedbackVideo?.let { video ->
-        RecommendationFeedbackDialog(video, close = { feedbackVideo = null; focusShelf(shelfIndex) }) { action ->
+        RecommendationFeedbackDialog(video, close = { feedbackVideo = null; focusShelf(shelfIndex) }, openingPress = feedbackPress,
+            openChannel = openChannel?.let { open -> { feedbackVideo = null; open(video) } }) { action ->
             feedback(video, action)
             pinnedCards = emptyList(); pinnedOrigins = emptyMap(); waitingForCard = true
         }
@@ -379,7 +392,7 @@ private fun OverlayIcon(label: String, glyph: String, focus: FocusRequester, foc
             if (event.type == KeyEventType.KeyDown && (event.key == Key.DirectionLeft || event.key == Key.DirectionRight)) { horizontal(event.key == Key.DirectionRight); true } else false
         }, contentPadding = PaddingValues(10.dp), shape = ButtonDefaults.shape(shape = RoundedCornerShape(50)),
         colors = ButtonDefaults.colors(containerColor = Color.Black.copy(alpha = .5f), focusedContainerColor = Accent, contentColor = Cloud, focusedContentColor = Ink)) {
-        if (glyph == "captions") Text("CC", color = if (selected) Ink else Cloud, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+        if (glyph == "captions" || glyph == "channel") Text(if (glyph == "channel") "CH" else "CC", color = if (selected) Ink else Cloud, fontSize = 13.sp, fontWeight = FontWeight.Bold,
             modifier = Modifier.clearAndSetSemantics {}.border(1.dp, if (selected) Ink else Cloud, RoundedCornerShape(3.dp)).padding(horizontal = 2.dp))
         else PlaybackGlyph(glyph, if (selected) Ink else Cloud, Modifier.size(22.dp))
     }
@@ -405,9 +418,10 @@ private fun PlaybackGlyph(kind: String, tint: Color, modifier: Modifier) = Canva
 }
 
 @Composable
-private fun CompactVideoCard(video: VideoSummary, modifier: Modifier, play: () -> Unit) {
+internal fun CompactVideoCard(video: VideoSummary, modifier: Modifier, play: () -> Unit) {
     var selected by remember { mutableStateOf(false) }
-    Button(onClick = play, modifier = modifier.width(200.dp).height(180.dp).onFocusChanged { selected = it.isFocused }
+    Button(onClick = play, modifier = modifier.width(200.dp).height(200.dp).onFocusChanged { selected = it.isFocused }
+        .semantics { contentDescription = "Play ${video.title}" }
         .border(if (selected) 2.dp else 0.dp, if (selected) Accent else Color.Transparent, RoundedCornerShape(10.dp)),
         contentPadding = PaddingValues(0.dp), shape = ButtonDefaults.shape(shape = RoundedCornerShape(10.dp)),
         scale = ButtonDefaults.scale(focusedScale = 1f), colors = ButtonDefaults.colors(containerColor = Panel, focusedContainerColor = Panel, contentColor = Cloud, focusedContentColor = Cloud)) {
@@ -417,6 +431,8 @@ private fun CompactVideoCard(video: VideoSummary, modifier: Modifier, play: () -
                     modifier = Modifier.align(Alignment.BottomEnd).padding(5.dp).background(Color.Black.copy(alpha = .8f), RoundedCornerShape(3.dp)).padding(3.dp)) }
             Text(video.title, color = Cloud, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp))
             UploadAgeText(video, modifier = Modifier.padding(horizontal = 8.dp))
+            Text(video.channel, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 8.dp).padding(top = 2.dp, bottom = 4.dp))
         }
     }
 }
