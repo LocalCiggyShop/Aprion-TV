@@ -155,7 +155,7 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
                 val resolved = if (target.id == video.id) target.copy(channelId = controller.plan?.channelId ?: target.channelId,
                     channel = controller.plan?.channel?.takeIf { it.isNotBlank() } ?: target.channel) else target
                 exit.release(); open(resolved)
-            } } }, preview = controller.plan?.preview, autoplayEnabled = settings.autoplay,
+            } } }, preview = controller.plan?.preview, autoplayEnabled = settings.autoplay, chapters = controller.plan?.chapters.orEmpty(),
             beginSeek = {
                 if (released || status.error != null || !controller.player.isCurrentMediaItemSeekable ||
                     !controller.player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) || knownDuration() <= 0) null

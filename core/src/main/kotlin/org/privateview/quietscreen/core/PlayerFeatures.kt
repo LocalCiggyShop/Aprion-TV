@@ -33,9 +33,32 @@ data class PreviewFrame(val sheet: Int, val left: Int, val top: Int, val width: 
     fun fits(imageWidth: Int, imageHeight: Int) = left >= 0 && top >= 0 && left.toLong() + width <= imageWidth && top.toLong() + height <= imageHeight
 }
 
-data class SeekSession(val originalMs: Long, val pendingMs: Long, val durationMs: Long, val resume: Boolean) {
+data class VideoChapter(val title: String, val startMs: Long)
+
+/** Optional provider metadata: bounded plain text, unique starts, no chapter at/past the end. */
+fun normalizeVideoChapters(chapters: List<VideoChapter>, durationMs: Long): List<VideoChapter> {
+    if (durationMs <= 0) return emptyList()
+    return chapters.asSequence().take(256).filter { it.startMs >= 0 && it.startMs < durationMs }
+        .distinctBy { it.startMs }.sortedBy { it.startMs }.mapIndexed { index, chapter ->
+            val title = chapter.title.take(200).map { if (it.isISOControl()) ' ' else it }.joinToString("").trim()
+            chapter.copy(title = title.ifBlank { "Chapter ${index + 1}" })
+        }.toList()
+}
+
+data class SeekSession(val originalMs: Long, val pendingMs: Long, val durationMs: Long, val resume: Boolean,
+    val chapterMode: Boolean = false) {
     init { require(durationMs > 0 && originalMs in 0..durationMs && pendingMs in 0..durationMs) }
-    fun move(forward: Boolean, repeated: Int = 0): SeekSession {
+    /** Chapters must be normalized for this session's duration. Up selects the current chapter. */
+    fun selectChapters(chapters: List<VideoChapter>): SeekSession {
+        if (chapters.isEmpty()) return this
+        val current = chapters.lastOrNull { it.startMs <= pendingMs } ?: chapters.first()
+        return copy(pendingMs = current.startMs, chapterMode = true)
+    }
+    fun move(forward: Boolean, repeated: Int = 0, chapters: List<VideoChapter> = emptyList()): SeekSession {
+        if (chapterMode) {
+            val next = if (forward) chapters.firstOrNull { it.startMs > pendingMs } else chapters.lastOrNull { it.startMs < pendingMs }
+            return copy(pendingMs = next?.startMs ?: pendingMs)
+        }
         val step = when { repeated >= 30 -> 60_000L; repeated >= 10 -> 30_000L; else -> 10_000L }
         val next = if (forward) pendingMs + minOf(step, durationMs - pendingMs) else pendingMs - minOf(step, pendingMs)
         return copy(pendingMs = next)

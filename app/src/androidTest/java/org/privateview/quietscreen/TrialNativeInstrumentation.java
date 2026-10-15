@@ -27,6 +27,8 @@ public final class TrialNativeInstrumentation extends Instrumentation {
     private String managerField;
     private String installMethod;
     private String resultMethod;
+    private String chapterTitle;
+    private String chapterStarts;
     @Override public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
         query = arguments == null ? null : arguments.getString("query");
@@ -35,6 +37,9 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         managerField = arguments == null ? null : arguments.getString("managerField");
         installMethod = arguments == null ? null : arguments.getString("installMethod");
         resultMethod = arguments == null ? null : arguments.getString("resultMethod");
+        String chapterTitleBase64 = arguments == null ? null : arguments.getString("chapterTitleBase64");
+        chapterTitle = chapterTitleBase64 == null ? null : new String(android.util.Base64.decode(chapterTitleBase64, android.util.Base64.DEFAULT), java.nio.charset.StandardCharsets.UTF_8);
+        chapterStarts = arguments == null ? null : arguments.getString("chapterStarts");
         start();
     }
     @Override public void onStart() {
@@ -67,6 +72,8 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         try {
             if ("featureSettings".equals(check)) {
                 featureSettings(); passed++; result.putString("stream", "\nOK (1 player feature settings check)\n");
+            } else if ("featureChapters".equals(check)) {
+                featureChapters(); passed++; result.putString("stream", "\nOK (1 player feature chapters check)\n");
             } else if ("featureSeek".equals(check)) {
                 featureSeek(); passed++; result.putString("stream", "\nOK (1 player feature seek check)\n");
             } else if ("featureAutoplay".equals(check)) {
@@ -261,6 +268,57 @@ public final class TrialNativeInstrumentation extends Instrumentation {
     private long pendingSeekSeconds() {
         java.util.regex.Matcher match = java.util.regex.Pattern.compile("Seek position (\\d+) seconds").matcher(texts());
         require(match.find(), "Pending seek timestamp missing"); return Long.parseLong(match.group(1));
+    }
+    private void featureChapters() throws Exception {
+        require(query != null && query.matches("[A-Za-z0-9_-]{11}") && chapterTitle != null && !chapterTitle.isEmpty() && chapterTitle.length() <= 500,
+            "Pinned chapter video arguments missing");
+        require(chapterStarts != null && chapterStarts.length() <= 4096, "Chapter starts missing/oversized");
+        String[] parts = chapterStarts.split(",");
+        require(parts.length >= 3 && parts.length <= 256, "Insufficient/bad chapter count");
+        long[] starts = new long[parts.length];
+        for (int i = 0; i < parts.length; i++) {
+            starts[i] = Long.parseLong(parts[i]);
+            require(starts[i] >= 0 && (i == 0 || starts[i] > starts[i - 1]), "Chapter starts must be ordered");
+        }
+        getTargetContext().getSharedPreferences("playback_preferences", 0).edit().putBoolean("autoplay", false).commit();
+        search(query); waitFor(chapterTitle, 60, false);
+        openPinnedResult(chapterTitle, true); waitFor("Playback Playing", 75, true);
+        observePlayback(1); key(KeyEvent.KEYCODE_MEDIA_PAUSE); waitFor("Playback Paused", 10, true);
+        focusChannelButton(chapterTitle, false);
+        long original = playbackSeconds();
+        holdSeek(KeyEvent.KEYCODE_DPAD_RIGHT);
+        long timeTarget = pendingSeekSeconds(); int current = 0;
+        for (int i = 0; i < starts.length; i++) if (starts[i] <= timeTarget) current = i;
+        key(KeyEvent.KEYCODE_DPAD_UP); waitFor("Chapter navigation", 5, true);
+        require(pendingSeekSeconds() == starts[current], "Up did not select current chapter");
+        require(current + 1 < starts.length, "Pinned opening position has no next chapter");
+        key(KeyEvent.KEYCODE_DPAD_RIGHT); require(pendingSeekSeconds() == starts[current + 1], "Right skipped/missed chapter");
+        key(KeyEvent.KEYCODE_DPAD_LEFT); require(pendingSeekSeconds() == starts[current], "Left missed chapter");
+        capturePlayer("/data/local/tmp/aprion-features-seek.png");
+        key(KeyEvent.KEYCODE_DPAD_DOWN); waitFor("Time seeking", 5, true);
+        key(KeyEvent.KEYCODE_DPAD_RIGHT); require(pendingSeekSeconds() == starts[current] + 10, "Down did not restore time seeking");
+        key(KeyEvent.KEYCODE_DPAD_UP); key(KeyEvent.KEYCODE_BACK); waitFor("Playback Paused", 5, true); waitPosition(original);
+        marker("FEATURE_CHAPTERS UpMode=true rightNext=true leftPrevious=true downTimeSeeking=true BackOriginalPaused=true chapterCount=" + starts.length);
+        focusChannelButton(chapterTitle, false); holdSeek(KeyEvent.KEYCODE_DPAD_RIGHT);
+        key(KeyEvent.KEYCODE_DPAD_UP); key(KeyEvent.KEYCODE_DPAD_RIGHT); long confirmed = pendingSeekSeconds();
+        key(KeyEvent.KEYCODE_DPAD_CENTER); waitFor("Playback Paused", 15, true); waitPosition(confirmed);
+        require(!texts().contains("OK Confirm"), "Chapter confirmation did not close seek mode");
+        key(KeyEvent.KEYCODE_MEDIA_PLAY); waitFor("Playback Playing", 20, true);
+        focusChannelButton(chapterTitle, false); holdSeek(KeyEvent.KEYCODE_DPAD_LEFT);
+        key(KeyEvent.KEYCODE_DPAD_UP); key(KeyEvent.KEYCODE_BACK); waitFor("Playback Playing", 10, true);
+        key(KeyEvent.KEYCODE_MEDIA_PAUSE); waitFor("Playback Paused", 10, true);
+        focusChannelButton(chapterTitle, false); long checkpoint = playbackSeconds();
+        holdSeek(KeyEvent.KEYCODE_DPAD_RIGHT); key(KeyEvent.KEYCODE_DPAD_UP);
+        key(KeyEvent.KEYCODE_DPAD_RIGHT); long pending = pendingSeekSeconds() * 1000;
+        require(pending > (checkpoint + 1) * 1000, "Background target too close to checkpoint");
+        key(KeyEvent.KEYCODE_HOME); SystemClock.sleep(700); launch();
+        require(!texts().contains("Playback Playing") && !texts().contains("OK Confirm"), "Chapter session survived background exit");
+        org.json.JSONArray records = new org.json.JSONObject(getTargetContext().getSharedPreferences("continue_watching", 0).getString("records", "{}")).getJSONArray("videos");
+        boolean originalSaved = false;
+        for (int i = 0; i < records.length(); i++) if (records.getJSONObject(i).optString("id").equals(query))
+            originalSaved = Math.abs(records.getJSONObject(i).optLong("position") - checkpoint * 1000) <= 1500 && records.getJSONObject(i).optLong("position") < pending - 500;
+        require(originalSaved, "Background chapter preview saved pending position");
+        marker("FEATURE_CHAPTERS confirmAbsoluteOnce=true pausedRetained=true playingRestored=true backgroundDiscard=true originalCheckpoint=true noAutoResume=true");
     }
     private void featureSeek() throws Exception {
         getTargetContext().getSharedPreferences("playback_preferences", 0).edit().putBoolean("autoplay", false).commit();

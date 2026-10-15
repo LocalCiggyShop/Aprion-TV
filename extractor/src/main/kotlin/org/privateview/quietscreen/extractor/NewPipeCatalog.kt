@@ -173,6 +173,12 @@ class NewPipeCatalog : VideoCatalog, StreamResolver, ChannelCatalog {
             channelId = runCatching { channelPath.find(e.uploaderUrl.orEmpty())?.groupValues?.get(1) }.getOrNull(),
             channel = runCatching { e.uploaderName?.take(200) }.getOrNull(),
             viewCount = runCatching { e.viewCount.takeIf { it >= 0 } }.getOrNull(),
+            // getStreamSegments parses the already-fetched response. Do not follow segment URLs.
+            chapters = runCatching {
+                normalizeVideoChapters(e.streamSegments.take(256).map { segment ->
+                    VideoChapter(segment.title.orEmpty(), segment.startTimeSeconds.toLong() * 1000)
+                }, e.length.coerceAtLeast(0) * 1000)
+            }.getOrDefault(emptyList()),
             preview = runCatching { e.frames.take(8).sortedBy { kotlin.math.abs(it.frameWidth - 160) }.firstNotNullOfOrNull { frames ->
                 runCatching {
                     require(frames.urls.size in 1..256)

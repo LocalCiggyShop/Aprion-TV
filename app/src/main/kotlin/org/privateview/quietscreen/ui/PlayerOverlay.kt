@@ -56,7 +56,7 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
     qualityChoices: () -> List<Pair<String, () -> Unit>>, audioChoices: () -> List<Pair<String, () -> Unit>>,
     feedback: (VideoSummary, RecommendationFeedback) -> Unit = { _, _ -> },
     openChannel: ((VideoSummary) -> Unit)? = null,
-    preview: PreviewStoryboard? = null, autoplayEnabled: Boolean = false,
+    preview: PreviewStoryboard? = null, autoplayEnabled: Boolean = false, chapters: List<VideoChapter> = emptyList(),
     beginSeek: () -> SeekSession? = { if (info.canSeek && info.duration > 0) SeekSession(info.position.coerceIn(0, info.duration), info.position.coerceIn(0, info.duration), info.duration, info.playing).also { setPlaying(false) } else null },
     finishSeek: (SeekSession, Boolean) -> Unit = { session, commit -> if (commit) seek(session.pendingMs - info.position); setPlaying(session.resume) }) {
     var visible by remember(info.video.id) { mutableStateOf(true) }
@@ -78,6 +78,9 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
     val cardsFocus = remember { mutableMapOf<String, FocusRequester>() }
     val scope = rememberCoroutineScope()
     var seekSession by remember(info.video.id) { mutableStateOf<SeekSession?>(null) }
+    val seekChapters = remember(chapters, seekSession?.durationMs, info.duration) {
+        normalizeVideoChapters(chapters, seekSession?.durationMs ?: info.duration)
+    }
     var heldArrow by remember(info.video.id) { mutableStateOf<Int?>(null) }
     var arrowHold by remember { mutableStateOf<Job?>(null) }
     var confirmDown by remember { mutableStateOf(false) }
@@ -229,9 +232,17 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
         if (down && !horizontal && seekSession == null) { arrowHold?.cancel(); heldArrow = null }
         if (seekSession != null && code != android.view.KeyEvent.KEYCODE_BACK) {
             when {
-                horizontal && down -> seekSession = seekSession!!.move(code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT, event.nativeKeyEvent.repeatCount)
+                down && code == android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                    arrowHold?.cancel(); heldArrow = null
+                    seekSession = seekSession!!.selectChapters(seekChapters)
+                }
+                down && code == android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    arrowHold?.cancel(); heldArrow = null
+                    seekSession = seekSession!!.copy(chapterMode = false)
+                }
+                horizontal && down -> seekSession = seekSession!!.move(code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT, event.nativeKeyEvent.repeatCount, seekChapters)
                 down && (code == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD || code == android.view.KeyEvent.KEYCODE_MEDIA_REWIND) ->
-                    seekSession = seekSession!!.move(code == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, event.nativeKeyEvent.repeatCount)
+                    seekSession = seekSession!!.move(code == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, event.nativeKeyEvent.repeatCount, seekChapters)
                 select && down && event.nativeKeyEvent.repeatCount == 0 -> confirmDown = true
                 select && event.type == KeyEventType.KeyUp && confirmDown -> endSeek(true)
                 horizontal && event.type == KeyEventType.KeyUp -> { heldArrow = null; arrowHold?.cancel() }
@@ -403,7 +414,7 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
             Text(when (area) { PlayerArea.OPTIONS -> "←/→ Choose button · OK Open · ↓ Playback"; PlayerArea.RECOMMENDATIONS -> "←/→ Browse · OK Watch · Back Hide controls";
                 else -> "←/→ Choose button · Hold ←/→ Seek · OK Pause / play · ↓ Recommended · Back Hide controls" }, color = Muted, fontSize = 10.sp)
         }
-        if (seekSession != null) SeekOverlay(seekSession!!, preview)
+        if (seekSession != null) SeekOverlay(seekSession!!, preview, seekChapters)
         menu?.let { currentMenu ->
             val choices = remember(currentMenu, info.choicesRevision, info.hasPlan, info.fixedQuality, info.requestedHeight) {
                 when (currentMenu) {

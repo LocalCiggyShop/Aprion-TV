@@ -1,28 +1,55 @@
-# Aprion TV
+<p align="center">
+  <img src="app/src/main/res/drawable-xhdpi/launcher_banner.png" alt="Aprion TV" width="320">
+</p>
 
-An independent Android TV player for public YouTube videos, with native Media3 playback, remote navigation, search, quality and audio-track controls. No account, analytics or ad SDK is included. This project is not affiliated with YouTube or Google.
+<p align="center">
+  <strong>YouTube videos, made for your TV remote.</strong><br>
+  An independent player for Android TV and Google TV. No account required.
+</p>
 
-Version **0.3.10-beta** (version code 14). View counts on video cards and player details; hold Left/Right for preview seeking with OK confirmation and Back cancellation; default-on Autoplay with a 15-second countdown; playback elapsed/total time aligned inside the lower-right details panel.
- Uses Android package org.privateview.apriontv and the permanent signing key. Legacy org.privateview.quietscreen installations need a separate installation; private app data does not transfer automatically. Physical-TV compatibility and audio/sync qualification remain limited. Captions are unsupported. Extraction can break when YouTube changes; ad-free playback is not guaranteed.
+<p align="center">
+  <a href="https://github.com/LocalCiggyShop/Aprion-TV/releases"><strong>Download Aprion TV</strong></a>
+  &nbsp;&bull;&nbsp;
+  <a href="#features">Explore features</a>
+</p>
 
-The app checks for and downloads updates while Home or Settings is open. Signed metadata and the APK must match the installed app's package, higher version and certificate. A manual check presents a focused Install update/Later dialog once the download is verified; Settings can reopen it with Review update. Android may require installation approval. Future builds use the configured [Aprion TV repository](https://github.com/LocalCiggyShop/Aprion-TV).
+---
 
-Search defaults to Newest first, using upload dates already returned by YouTube to order the loaded results. The adjacent Sort button switches to Relevance. Sorting is bounded at 150 in-memory results, unknown dates remain last, and More results expands the ordered list. YouTube currently ignores its former global upload-date sort parameter, so this does not promise a complete chronological index of every matching upload. Changing sort restarts pagination with the current query; no extra date requests or stored search history are added. Launcher artwork uses the approved Aprion TV A/play logo.
+## Watch on the big screen
 
-Current Aprion TV source uses Android package `org.privateview.apriontv`, retaining the permanent signing key and signed-update protocol. Releases through 0.3.7-beta use `org.privateview.quietscreen`. Android treats the new package as a separate app: install the new official APK manually once available, and start with fresh on-device preferences, recommendations and resume records. Existing app data does not transfer automatically. The legacy app and its last compatible signed update feed remain separate. APKs through 0.3.6-beta also pin the former `QuietScreen` repository; reinstalling an unchanged legacy APK does not restore its updater.
+Aprion TV lets you discover, search and watch public YouTube videos through a native TV interface. Browse by genre, explore a creator's uploads or pick up an unfinished video, all with your remote.
 
-Channel browsing: hold OK or press Menu on a Home card and choose View channel, or select CH immediately left of CC during playback. The channel's regular uploads appear newest first, with Older videos, cached Newer videos and a Latest videos reset. Shorts and Streams tabs are not requested. The channel cache is bounded and stays in memory. Opening a channel saves the outgoing video's position and releases playback. A video selected from the channel returns to that page and card when playback is closed; Back from the channel returns Home.
+Built for **Android TV and Google TV running Android 8.0 or later**.
 
-Videos show their upload age beneath the existing metadata, including Home/genre cards, Search, Continue watching, player details, related suggestions and tuning dialogs. Labels use seconds, minutes, hours, days, months or years; missing dates show Upload date unavailable and live videos show Live video. Provider dates may be approximate. One foreground clock serves visible labels and pauses in the background; date metadata adds no network requests.
+## Features
 
-Video cards show compact view counts at the bottom-right, and player details show the full available count. Existing catalog/playback responses supply the counts; unavailable values are labelled rather than shown as zero. Continue watching retains available counts and accepts older saved records.
+| | What you can do |
+| :--- | :--- |
+| **Browse & discover** | Explore eight genre rows and personalised recommendations. Video cards show upload age and available view counts. |
+| **Search** | Find videos and sort loaded results by newest first or relevance. Load more results as you browse. |
+| **Channel browsing** | Open a creator's regular uploads, browse older videos and return to the same channel after playback. |
+| **Continue watching** | Resume unfinished videos from saved playback positions. |
+| **Native playback** | Use remote controls to play, pause and choose available video quality and audio tracks. |
+| **Preview seeking** | Hold Left or Right to choose a position, then press OK to seek or Back to cancel. Preview images appear when available. |
+| **Video chapters** | While seeking, press Up to snap between available chapters with Left/Right. Down returns to time seeking; OK confirms and Back cancels. |
+| **Autoplay** | Continue to a recommended video after a 15-second countdown, with Play now and Cancel options. Autoplay can be turned off. |
+| **Tune recommendations** | Choose More like this, Not interested or Don't recommend this channel. Pause learning or reset your preferences in Settings. |
+| **In-app updates** | Check for updates in Settings. Updates are checked and downloaded while Home or Settings is open, with signature verification before installation. Android may require approval. |
 
-Playback uses a compact TV overlay with title/channel, pause/play, an elapsed/total timestamp at the lower-right inside the details panel, a progress bar, Settings, CH and CC buttons, and a lazy row of on-device Recommended videos. A loading spinner appears while buffering. Hold Left/Right on the playback surface or transport to open seek mode, then release and tap/hold either arrow to adjust the proposed position. A sampled preview appears when the provider supplies usable storyboard images; otherwise the timestamp remains available. A fresh OK applies the seek; Back discards it and restores the original playing/paused state. Seeking does not move playback until confirmed. Short Left/Right presses navigate visible controls or reveal hidden controls. Menus and recommendation cards retain directional navigation. Down opens recommendations; Back hides controls and a further Back closes playback, returning to the channel page for channel-selected videos or Home otherwise. Quality/audio selection and the existing CH/CC controls remain available; captions are unsupported.
+## Your preferences stay on your device
 
-Autoplay is a local Settings preference, on by default. At completion the recommendation shelf expands. With an eligible next recommendation, Autoplay shows a 15-second countdown, Play now and Cancel autoplay. Manual interaction cancels that ending's countdown; replay can start a new countdown when it ends. With Autoplay off, recommendations remain available for manual selection. Leaving the player, backgrounding the app or a playback error cancels pending work. Reset playback settings restores Autoplay to on. Resume positions and local learning still use actual playback, not preview positions.
+Aprion TV has **no sign-in, analytics or ad SDK**. Recommendation preferences, feedback and resume positions are stored locally. Search queries and catalog results stay in memory.
 
-The browsing screen provides remote-controlled horizontal genre rows, pagination and focus restoration after playback. Recommended learns bounded topic, channel and genre preferences from actual watch time, estimated completion and modest early-exit signals. Search videos can train topics/channels even when their genre is unknown. Recommendations mix interests with rotating discovery sources, favour fresh candidates and limit repeated creators when alternatives exist. Hold OK or press Menu on a Home/player card for More like this, Not interested or Don't recommend this channel. Player suggestions use related metadata from the existing playback response, with local topic/creator matching as a fallback. Ranking runs off the UI thread. All eight genre rows remain available. Settings can pause learning or erase interests and feedback. Continue watching appears second only when nonempty; unfinished ordinary videos qualify after one second, and actual completion removes them.
+When personalisation is enabled, discovery may send up to two learned topic words to YouTube. Stored viewing lists, feedback and preference scores are not uploaded. Video requests contact YouTube and its media servers; update requests contact GitHub.
 
-Search queries and catalog results stay in memory. Private, backup-disabled storage keeps eight genre scores, up to 64 topic scores, 32 channel scores, 80 dismissed video IDs, 24 excluded channel keys and 96 recently offered video IDs. Bounded public-name aliases connect older name-only records with fresh channel-ID metadata; distinct known channel IDs remain separate. Continue watching separately keeps 24 unfinished records and 100 completed IDs. Clear browsing session erases resume/completion records; Reset personalization separately erases interests, feedback and offered IDs. No account, telemetry or recommender server is used. When personalization is on, discovery may send up to two learned public-video topic words to YouTube, replacing one genre request in a batch of at most four. Scores and stored viewing/feedback lists are never uploaded. Related player metadata adds no request. Thumbnails/playback contact YouTube/CDNs and updates contact GitHub; providers see normal request metadata and IP addresses.
+## Good to know
 
-See [BUILDING.md](BUILDING.md), [PUBLIC_SECURITY.md](PUBLIC_SECURITY.md), [PUBLICATION.md](PUBLICATION.md), [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
+- Captions are currently unsupported.
+- Search sorting applies to loaded results, rather than every matching video on YouTube.
+- YouTube changes can interrupt browsing or playback; ad-free playback is not guaranteed.
+
+---
+
+**Independent project.** Aprion TV is not affiliated with, endorsed by or sponsored by YouTube or Google. YouTube and Google are trademarks of their respective owners. Videos, thumbnails and other content belong to their respective rights holders.
+
+Licensed under [GPL-3.0-or-later](LICENSE). See [third-party notices](NOTICE.md).
