@@ -214,7 +214,7 @@ class PlayerOverlayContractTest {
         }
     }
 
-    @Test fun hiddenOverlayArrowsSeekOnFirstPressAndPausedOverlayStaysVisible() {
+    @Test fun heldArrowsRequireConfirmationAndBackDiscardsPendingSeek() {
         withFixture { host ->
             var position by mutableLongStateOf(30_000)
             var playing by mutableStateOf(true)
@@ -226,14 +226,24 @@ class PlayerOverlayContractTest {
                 } }
             }
             await { focused().contains("Pause video") }
-            await(11) { !text().contains("Recommended") }
-            key(KeyEvent.KEYCODE_DPAD_RIGHT); await { position == 40_000L && !text().contains("Recommended") }
-            key(KeyEvent.KEYCODE_MEDIA_PAUSE); await { !playing && focused().contains("Play video") }
-            key(KeyEvent.KEYCODE_DPAD_LEFT); await { focused().trim() == "Settings" }
-            assertEquals(40_000, position)
             key(KeyEvent.KEYCODE_BACK); await { !text().contains("Recommended") }
-            key(KeyEvent.KEYCODE_DPAD_LEFT); await { position == 30_000L }
-            key(KeyEvent.KEYCODE_DPAD_UP); await { focused().trim() == "Settings" }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT); await { text().contains("Recommended") }
+            assertEquals(30_000L, position)
+            fun hold(code: Int) {
+                val down = SystemClock.uptimeMillis()
+                instrument.sendKeySync(KeyEvent(down, down, KeyEvent.ACTION_DOWN, code, 0))
+                Thread.sleep(android.view.ViewConfiguration.getLongPressTimeout() + 250L)
+                instrument.sendKeySync(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0))
+                await { text().contains("OK Confirm") }
+            }
+            hold(KeyEvent.KEYCODE_DPAD_RIGHT); key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            assertEquals(30_000L, position); assertFalse(playing)
+            assertTrue(text().contains("Preview unavailable"))
+            key(KeyEvent.KEYCODE_BACK); await { playing && focused().contains("Pause video") }
+            assertEquals(30_000L, position)
+            key(KeyEvent.KEYCODE_MEDIA_PAUSE); await { !playing && focused().contains("Play video") }
+            hold(KeyEvent.KEYCODE_DPAD_LEFT); key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await { position == 20_000L && focused().contains("Play video") }
             assertFalse(playing)
         }
     }
@@ -267,7 +277,7 @@ class PlayerOverlayContractTest {
             await { text().contains("Try playback again") && !text().contains("Buffering video") }
             key(KeyEvent.KEYCODE_BACK); await { !text().contains("Try playback again") }
             onMain { error = null; buffering = false; ended = true }
-            await { focused().contains("Replay video") && text().contains("Recommended") }
+            await { text().contains("Replay video") && text().contains("Recommended") }
             key(KeyEvent.KEYCODE_BACK); await { !text().contains("Recommended") }
         }
     }

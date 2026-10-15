@@ -25,6 +25,7 @@ import org.privateview.quietscreen.core.WatchTime
 import org.privateview.quietscreen.core.Genre
 import org.privateview.quietscreen.core.GenreClassifier
 import org.privateview.quietscreen.core.RecommendationFeedback
+import org.privateview.quietscreen.core.SeekSession
 import org.privateview.quietscreen.playback.PlayerController
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -64,7 +65,7 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
         ?: GenreClassifier.classify(video.copy(title = controller.plan?.title ?: video.title))
     fun leavePlayer() { exit.release(); back() }
     LaunchedEffect(video.id, controller.plan) {
-        controller.plan?.let { plan -> recordMetadata(video.copy(uploadedAtMs = plan.uploadedAtMs ?: video.uploadedAtMs,
+        controller.plan?.let { plan -> recordMetadata(video.copy(viewCount = plan.viewCount ?: video.viewCount, uploadedAtMs = plan.uploadedAtMs ?: video.uploadedAtMs,
             channelId = plan.channelId ?: video.channelId, channel = plan.channel?.takeIf { it.isNotBlank() } ?: video.channel)) }
         recommendations?.context(video.copy(title = controller.plan?.title ?: video.title), controller.plan?.related.orEmpty())
     }
@@ -94,10 +95,14 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
         val window = (context as? ComponentActivity)?.window
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val watchListener = object : Player.Listener {
+            private var endedReported = false
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (!released) buffering = playbackState == Player.STATE_BUFFERING
-                if (!released && playbackState == Player.STATE_ENDED) recordProgress(controller.player.currentPosition.coerceAtLeast(0),
-                    knownDuration(), true, detectedGenre())
+                if (playbackState != Player.STATE_ENDED) endedReported = false
+                if (!released && playbackState == Player.STATE_ENDED && !endedReported) {
+                    endedReported = true
+                    recordProgress(controller.player.currentPosition.coerceAtLeast(0), knownDuration(), true, detectedGenre())
+                }
             }
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 if (!released) watchTime.sample(android.os.SystemClock.elapsedRealtime(), controller.player.currentPosition.coerceAtLeast(0), isPlaying)
@@ -126,10 +131,11 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
         ?: org.privateview.quietscreen.presentation.BrowseRow(null, loaded = true, recommended = true)
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(factory = { view }, modifier = Modifier.fillMaxSize())
-        PlayerOverlay(PlayerOverlayInfo(video.copy(uploadedAtMs = controller.plan?.uploadedAtMs ?: video.uploadedAtMs), position, duration, playing,
+        PlayerOverlay(PlayerOverlayInfo(video.copy(viewCount = controller.plan?.viewCount ?: video.viewCount, uploadedAtMs = controller.plan?.uploadedAtMs ?: video.uploadedAtMs), position, duration, playing,
             controller.player.playbackState == Player.STATE_ENDED, status.text, status.renderedHeight, status.error,
             controller.plan != null && !released,
-            !released && controller.plan != null && controller.player.playbackState != Player.STATE_IDLE && duration > 0,
+            !released && controller.plan != null && controller.player.isCurrentMediaItemSeekable &&
+                controller.player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) && duration > 0,
             status.requestedHeight, status.fixedQuality, status.trackRevision, buffering), recommendationRow,
             loadRecommendations = { refresh -> recommendations?.loadRow("recommended", retry = refresh) },
             cancelRecommendations = { recommendations?.cancel() },
@@ -149,7 +155,23 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
                 val resolved = if (target.id == video.id) target.copy(channelId = controller.plan?.channelId ?: target.channelId,
                     channel = controller.plan?.channel?.takeIf { it.isNotBlank() } ?: target.channel) else target
                 exit.release(); open(resolved)
-            } } })
+            } } }, preview = controller.plan?.preview, autoplayEnabled = settings.autoplay,
+            beginSeek = {
+                if (released || status.error != null || !controller.player.isCurrentMediaItemSeekable ||
+                    !controller.player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) || knownDuration() <= 0) null
+                else {
+                    val length = knownDuration()
+                    val original = controller.player.currentPosition.coerceIn(0, length)
+                    val resume = controller.player.playWhenReady
+                    controller.player.pause()
+                    SeekSession(original, original, length, resume)
+                }
+            }, finishSeek = { session, commit ->
+                if (!released && status.error == null) {
+                    if (commit) controller.seekTo(session.pendingMs)
+                    controller.player.playWhenReady = session.resume
+                }
+            })
     }
 }
 

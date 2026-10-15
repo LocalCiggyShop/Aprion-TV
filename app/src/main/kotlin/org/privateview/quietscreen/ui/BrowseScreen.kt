@@ -302,7 +302,7 @@ private class NavigationQueue {
 @Composable
 private fun VideoCard(video: VideoSummary, modifier: Modifier, resumeMs: Long? = null, play: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    Button(onClick = play, modifier = modifier.width(224.dp).height(228.dp).onFocusChanged { focused = it.isFocused }
+    Button(onClick = play, modifier = modifier.width(224.dp).height(250.dp).onFocusChanged { focused = it.isFocused }
         .border(if (focused) 2.dp else 0.dp, if (focused) Accent else Panel, RoundedCornerShape(12.dp)),
         contentPadding = PaddingValues(0.dp),
         shape = ButtonDefaults.shape(shape = RoundedCornerShape(12.dp)),
@@ -322,10 +322,12 @@ private fun VideoCard(video: VideoSummary, modifier: Modifier, resumeMs: Long? =
                     color = Cloud, fontSize = 11.sp, modifier = Modifier.align(Alignment.BottomEnd).padding(7.dp)
                         .background(Ink.copy(alpha = .9f), RoundedCornerShape(4.dp)).padding(horizontal = 5.dp, vertical = 2.dp))
             }
-            Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(video.title, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(video.channel, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 UploadAgeText(video)
+                Spacer(Modifier.weight(1f))
+                ViewCount(video, Modifier.align(Alignment.End))
             }
         }
     }

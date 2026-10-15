@@ -170,6 +170,10 @@ class PlayerController(private val context: Context, private val resolver: Strea
     }
     private fun fail(code: ErrorCode) { if (!released) { player.stop(); mutable.value = mutable.value.copy(error = code, text = code.userMessage()) } }
     fun seekBy(deltaMs: Long) { player.seekTo((player.currentPosition + deltaMs).coerceIn(0, player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE)) }
+    fun seekTo(positionMs: Long) {
+        if (!released && player.isCurrentMediaItemSeekable && player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM))
+            player.seekTo(positionMs.coerceIn(0, player.duration.takeIf { it > 0 } ?: plan?.durationMs?.takeIf { it > 0 } ?: return))
+    }
     fun changeQuality(maxHeight: Int, requireSeparate: Boolean = false) {
         if (released) return
         val p = plan ?: return

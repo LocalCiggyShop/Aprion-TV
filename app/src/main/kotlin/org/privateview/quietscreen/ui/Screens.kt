@@ -163,7 +163,10 @@ fun SearchScreen(model: SearchViewModel, home: () -> Unit, play: (VideoSummary) 
                             Text(video.channel + (video.durationSeconds?.let { " · ${timeLabel(it * 1000)}" } ?: ""), fontSize = 13.sp, maxLines = 1)
                             UploadAgeText(video, fontSize = 13.sp, color = androidx.tv.material3.LocalContentColor.current)
                         }
-                        Text("PLAY", fontSize = 12.sp)
+                        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("PLAY", fontSize = 12.sp)
+                            ViewCount(video, color = androidx.tv.material3.LocalContentColor.current)
+                        }
                     }
                 }
             }
@@ -193,6 +196,7 @@ fun SettingsScreen(settings: AppSettings, updates: UpdateManager, personalizatio
     var height by remember { mutableIntStateOf(settings.maxHeight) }
     var message by remember { mutableStateOf("Preferences stay on this device.") }
     var personalized by remember { mutableStateOf(personalization.enabled) }
+    var autoplay by remember { mutableStateOf(settings.autoplay) }
     var personalizationMessage by remember { mutableStateOf("All genre categories remain available.") }
     LaunchedEffect(Unit) { first.requestFocus() }
     BackHandler(onBack = home)
@@ -207,9 +211,12 @@ fun SettingsScreen(settings: AppSettings, updates: UpdateManager, personalizatio
             }
         }
         Text("To change a video's language or audio track, open Settings while it plays. Captions aren't available yet.", color = Muted, fontSize = 14.sp)
+        Text("Autoplay", color = Cloud, fontSize = 19.sp)
+        Text("Play the next recommendation after a 15-second countdown when a video ends. You can cancel each countdown.", color = Muted, fontSize = 14.sp)
+        TvAction("Autoplay: " + if (autoplay) "On" else "Off") { autoplay = !autoplay; settings.autoplay = autoplay }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             TvAction("Clear browsing session") { clearSession(); message = "Search results and saved watch history cleared. Your learned preferences are kept." }
-            TvAction("Reset playback settings") { settings.reset(); height = settings.maxHeight; message = "Playback settings restored to their defaults." }
+            TvAction("Reset playback settings") { settings.reset(); height = settings.maxHeight; autoplay = settings.autoplay; message = "Playback settings restored to their defaults." }
         }
         Text(message, color = Accent, fontSize = 14.sp)
         Text("Recommended for you", color = Cloud, fontSize = 19.sp)

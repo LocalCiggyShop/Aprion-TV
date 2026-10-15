@@ -24,7 +24,8 @@ class ContinueWatching(context: Context) {
         next.videos.forEach { entry -> videos.put(JSONObject().put("id", entry.video.id.value)
             .put("title", entry.video.title).put("channel", entry.video.channel).put("channelId", entry.video.channelId ?: "").put("position", entry.positionMs)
             .put("duration", entry.durationMs).put("genre", entry.genre?.name ?: "")
-            .put("uploadedAt", entry.video.uploadedAtMs?.takeIf { it > 0 } ?: 0)) }
+            .put("uploadedAt", entry.video.uploadedAtMs?.takeIf { it > 0 } ?: 0)
+            .put("views", entry.video.viewCount?.takeIf { it >= 0 } ?: -1)) }
         prefs.edit().putString("records", JSONObject().put("videos", videos).put("finished", JSONArray(next.finished)).toString()).apply()
     }
     private fun read(): ContinueWatchingState = runCatching {
@@ -43,7 +44,8 @@ class ContinueWatching(context: Context) {
             require(duration in 1..ContinueWatchingState.MAX_DURATION_MS && position in 1_000 until duration && id.value !in finished)
             UnfinishedVideo(VideoSummary(id, item.getString("title").take(200), item.getString("channel").take(120), null,
                 duration / 1000, channelId = item.optString("channelId").takeIf { it.matches(Regex("UC[A-Za-z0-9_-]{22}")) },
-                uploadedAtMs = item.optLong("uploadedAt", 0).takeIf { it > 0 }),
+                uploadedAtMs = item.optLong("uploadedAt", 0).takeIf { it > 0 },
+                viewCount = item.optLong("views", -1).takeIf { it >= 0 }),
                 position, duration, Genre.entries.firstOrNull { it.name == item.optString("genre") })
         }.getOrNull() }.distinctBy { it.video.id }
         ContinueWatchingState(videos, finished)

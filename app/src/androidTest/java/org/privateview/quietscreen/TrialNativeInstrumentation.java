@@ -53,6 +53,8 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         String originalContinue = continuing.getString("records", null);
         android.content.SharedPreferences interests = getTargetContext().getSharedPreferences("recommendation_interests", android.content.Context.MODE_PRIVATE);
         String originalInterests = interests.getString("profile", null);
+        android.content.SharedPreferences playbackPrefs = getTargetContext().getSharedPreferences("playback_preferences", 0);
+        java.util.Map<String, ?> originalPlayback = playbackPrefs.getAll();
         if ("recommendationsV2".equals(check)) {
             interests.edit().clear().commit(); continuing.edit().clear().commit();
             genrePreferences.edit().clear().putBoolean("enabled", true).commit();
@@ -63,7 +65,15 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         // Idle-network checks run with optional update traffic disabled, then restore the preference.
         updatePreferences.edit().putBoolean("automatic", false).commit();
         try {
-            if ("updateInstall".equals(check)) {
+            if ("featureSettings".equals(check)) {
+                featureSettings(); passed++; result.putString("stream", "\nOK (1 player feature settings check)\n");
+            } else if ("featureSeek".equals(check)) {
+                featureSeek(); passed++; result.putString("stream", "\nOK (1 player feature seek check)\n");
+            } else if ("featureAutoplay".equals(check)) {
+                featureAutoplay(); passed++; result.putString("stream", "\nOK (1 player feature autoplay check)\n");
+            } else if ("featureLifecycle".equals(check)) {
+                featureLifecycle(); passed++; result.putString("stream", "\nOK (1 player feature lifecycle check)\n");
+            } else if ("updateInstall".equals(check)) {
                 updateInstall(originalAutomaticUpdates);
                 throw new AssertionError("Installer did not replace the process within the bounded observation");
             } else if ("browse".equals(check)) {
@@ -121,6 +131,7 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             }
             result.putInt("passed", passed);
         } catch (Throwable failure) {
+            if (check != null && check.startsWith("feature")) try { capturePlayer("/data/local/tmp/aprion-features-failure.png"); } catch (Exception ignored) { }
             if ("channelHome".equals(check) || "channelPlayer".equals(check) || "channelReturn".equals(check)) {
                 try { capturePlayer("/data/local/tmp/aprion-channel-failure.png"); } catch (Exception ignored) { }
             }
@@ -148,6 +159,14 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             android.content.SharedPreferences.Editor interestRestore = interests.edit().clear();
             if (originalInterests != null) interestRestore.putString("profile", originalInterests);
             interestRestore.commit();
+            android.content.SharedPreferences.Editor playbackRestore = playbackPrefs.edit().clear();
+            for (java.util.Map.Entry<String, ?> entry : originalPlayback.entrySet()) {
+                Object value = entry.getValue();
+                if (value instanceof Boolean) playbackRestore.putBoolean(entry.getKey(), (Boolean) value);
+                else if (value instanceof Integer) playbackRestore.putInt(entry.getKey(), (Integer) value);
+                else if (value instanceof String) playbackRestore.putString(entry.getKey(), (String) value);
+            }
+            playbackRestore.commit();
         }
         finish(resultCode, result);
     }
@@ -189,6 +208,142 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             SystemClock.sleep(300);
         }
         throw new AssertionError("Channel page " + page + " unavailable");
+    }
+    private void featureSettings() throws Exception {
+        android.content.SharedPreferences prefs = getTargetContext().getSharedPreferences("playback_preferences", 0);
+        prefs.edit().clear().commit();
+        org.json.JSONObject countRecord = new org.json.JSONObject().put("id", "dQw4w9WgXcQ").put("title", "View count fixture")
+            .put("channel", "Fixture").put("position", 1000).put("duration", 212000).put("views", 1234);
+        org.json.JSONObject oldRecord = new org.json.JSONObject().put("id", "jNQXAC9IVRw").put("title", "Legacy view count fixture")
+            .put("channel", "Fixture").put("position", 1000).put("duration", 19000);
+        getTargetContext().getSharedPreferences("continue_watching", 0).edit().putString("records",
+            new org.json.JSONObject().put("videos", new org.json.JSONArray().put(countRecord).put(oldRecord)).put("finished", new org.json.JSONArray()).toString()).commit();
+        launch();
+        for (int attempt = 0; attempt < 8 && channelButton("View count fixture", false) == null; attempt++) {
+            for (AccessibilityNodeInfo node : nodes()) if (node.isScrollable()) { node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD); break; }
+            SystemClock.sleep(300);
+        }
+        long countsDeadline = SystemClock.elapsedRealtime() + 6000;
+        while (SystemClock.elapsedRealtime() < countsDeadline && (!featureCardContains("View count fixture", "1.2K views") || !featureCardContains("Legacy view count fixture", "Views unavailable"))) SystemClock.sleep(100);
+        require(featureCardContains("View count fixture", "1.2K views"), "Continue card count missing");
+        require(featureCardContains("Legacy view count fixture", "Views unavailable"), "Legacy saved count label missing");
+        clickChannelButton("Settings");
+        waitFor("Video quality", 15, false); waitFor("Autoplay: On", 10, false);
+        clickChannelButton("Autoplay: On"); waitFor("Autoplay: Off", 5, false);
+        require(!prefs.getBoolean("autoplay", true), "Autoplay off was not saved");
+        launch(); clickChannelButton("Settings");
+        waitFor("Autoplay: Off", 15, false);
+        for (int attempt = 0; attempt < 8 && channelButton("Reset playback settings", true) == null; attempt++) {
+            for (AccessibilityNodeInfo node : nodes()) if (node.isScrollable()) { node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD); break; }
+            SystemClock.sleep(250);
+        }
+        clickChannelButton("Reset playback settings"); waitFor("Autoplay: On", 5, false);
+        require(prefs.getBoolean("autoplay", true), "Reset did not restore autoplay default");
+        capturePlayer("/data/local/tmp/aprion-features-settings.png");
+        marker("FEATURE_SETTINGS defaultOn=true persistsOffAcrossActivity=true resetOn=true");
+    }
+    private boolean featureCardContains(String title, String value) {
+        AccessibilityNodeInfo card = channelButton(title, false); if (card == null) return false;
+        android.graphics.Rect bounds = new android.graphics.Rect(); card.getBoundsInScreen(bounds);
+        for (AccessibilityNodeInfo node : nodes()) {
+            android.graphics.Rect child = new android.graphics.Rect(); node.getBoundsInScreen(child);
+            if (!child.isEmpty() && bounds.contains(child) && label(node).contains(value)) return true;
+        }
+        return false;
+    }
+    private void holdSeek(int code) {
+        long down = SystemClock.uptimeMillis();
+        require(ui().injectInputEvent(new KeyEvent(down, down, KeyEvent.ACTION_DOWN, code, 0), true), "Seek hold down refused");
+        SystemClock.sleep(android.view.ViewConfiguration.getLongPressTimeout() + 250);
+        require(ui().injectInputEvent(new KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0), true), "Seek hold up refused");
+        waitFor("OK Confirm", 5, true);
+    }
+    private long pendingSeekSeconds() {
+        java.util.regex.Matcher match = java.util.regex.Pattern.compile("Seek position (\\d+) seconds").matcher(texts());
+        require(match.find(), "Pending seek timestamp missing"); return Long.parseLong(match.group(1));
+    }
+    private void featureSeek() throws Exception {
+        getTargetContext().getSharedPreferences("playback_preferences", 0).edit().putBoolean("autoplay", false).commit();
+        search("dQw4w9WgXcQ"); waitFor("Never Gonna Give You Up", 60, false);
+        require(texts().matches("(?s).*\\d[\\d.,]*[KMBT]? views.*"), "Search view count missing");
+        openPinnedResult("Never Gonna Give You Up", true); waitFor("Playback Playing", 75, true);
+        observePlayback(2); key(KeyEvent.KEYCODE_MEDIA_PAUSE); waitFor("Playback Paused", 10, true);
+        require(texts().matches("(?s).*\\d[\\d,]* views.*"), "Full player count missing");
+        waitFor("Playback time ", 5, true);
+        capturePlayer("/data/local/tmp/aprion-features-player.png");
+        long original = playbackSeconds();
+        holdSeek(KeyEvent.KEYCODE_DPAD_RIGHT); long first = pendingSeekSeconds();
+        key(KeyEvent.KEYCODE_DPAD_RIGHT); require(pendingSeekSeconds() == first + 10, "Released arrow did not retain seek mode");
+        waitFor("Preview at", 20, true);
+        capturePlayer("/data/local/tmp/aprion-features-seek.png");
+        require(!texts().contains("Try playback again"), "Preview affected playback");
+        marker("FEATURE_PREVIEW imageAvailable=" + texts().contains("Preview at") + " timestamp=true");
+        key(KeyEvent.KEYCODE_BACK); waitFor("Playback Paused", 5, true);
+        require(Math.abs(playbackSeconds() - original) <= 1, "Back applied pending seek");
+        holdSeek(KeyEvent.KEYCODE_DPAD_RIGHT); long target = pendingSeekSeconds();
+        key(KeyEvent.KEYCODE_DPAD_CENTER); waitFor("Playback Paused", 10, true); waitPosition(target);
+        require(!texts().contains("OK Confirm"), "Confirm release did not close seek mode");
+        key(KeyEvent.KEYCODE_MEDIA_PLAY); waitFor("Playback Playing", 15, true);
+        holdSeek(KeyEvent.KEYCODE_DPAD_LEFT); key(KeyEvent.KEYCODE_BACK); waitFor("Playback Playing", 10, true);
+        key(KeyEvent.KEYCODE_MEDIA_PAUSE); waitFor("Playback Paused", 10, true);
+        marker("FEATURE_SEEK holdArrow=true releasedTaps=true BackOriginal=true confirmOnce=true pausedStateRetained=true playingStateRestored=true countsSearchAndPlayer=true");
+        focusChannelButton("View channel", true); key(KeyEvent.KEYCODE_DPAD_CENTER); waitChannelPage(1);
+        require(texts().contains("views"), "Channel card count label missing");
+        capturePlayer("/data/local/tmp/aprion-features-counts.png");
+        marker("FEATURE_COUNTS channelCards=true CHPreserved=true");
+    }
+    private void finishShortVideo() {
+        key(KeyEvent.KEYCODE_MEDIA_PAUSE); waitFor("Playback Paused", 10, true);
+        focusChannelButton("Me at the zoo", false);
+        key(KeyEvent.KEYCODE_MEDIA_PLAY);
+        holdSeek(KeyEvent.KEYCODE_DPAD_RIGHT); key(KeyEvent.KEYCODE_DPAD_RIGHT); key(KeyEvent.KEYCODE_DPAD_CENTER);
+        waitFor("Replay video", 20, true);
+    }
+    private void replayShortVideo() {
+        focusChannelButton("Me at the zoo", false); key(KeyEvent.KEYCODE_DPAD_CENTER); waitFor("Playback Playing", 15, true);
+    }
+    private void featureAutoplay() throws Exception {
+        android.content.SharedPreferences prefs = getTargetContext().getSharedPreferences("playback_preferences", 0);
+        prefs.edit().putBoolean("autoplay", false).commit();
+        search("jNQXAC9IVRw"); waitFor("Me at the zoo", 60, false);
+        openPinnedResult("Me at the zoo", false); waitFor("Playback Playing", 75, true);
+        finishShortVideo(); waitFor("Recommended", 10, true); SystemClock.sleep(16000);
+        require(texts().contains("Replay video") && !texts().contains("Up next in"), "Disabled autoplay advanced");
+        marker("FEATURE_AUTOPLAY offShowsRecommendations=true noAdvance16s=true");
+        prefs.edit().putBoolean("autoplay", true).commit(); replayShortVideo(); finishShortVideo();
+        waitFor("Up next in", 25, true); key(KeyEvent.KEYCODE_BACK); waitFor("Autoplay cancelled", 5, true);
+        SystemClock.sleep(16000); require(texts().contains("Replay video"), "Cancelled autoplay advanced");
+        marker("FEATURE_AUTOPLAY BackCancels=true noAdvanceAfterCancel16s=true replayRearms=true");
+        replayShortVideo(); finishShortVideo(); waitFor("Up next in", 25, true);
+        capturePlayer("/data/local/tmp/aprion-features-autoplay.png");
+        long countdownStart = SystemClock.elapsedRealtime();
+        waitFor("Playback Playing", 80, true);
+        require(SystemClock.elapsedRealtime() - countdownStart >= 13000, "Autoplay advanced before its countdown");
+        require(!texts().contains("Me at the zoo"), "Autoplay did not switch videos");
+        key(KeyEvent.KEYCODE_MEDIA_PAUSE); waitFor("Playback Paused", 10, true);
+        marker("FEATURE_AUTOPLAY fifteenSecondCountdown=true nextPlayback=true");
+    }
+    private void featureLifecycle() throws Exception {
+        getTargetContext().getSharedPreferences("playback_preferences", 0).edit().putBoolean("autoplay", true).commit();
+        search("jNQXAC9IVRw"); waitFor("Me at the zoo", 60, false);
+        openPinnedResult("Me at the zoo", false); waitFor("Playback Playing", 75, true); observePlayback(2);
+        key(KeyEvent.KEYCODE_MEDIA_PAUSE); waitFor("Playback Paused", 10, true);
+        focusChannelButton("Me at the zoo", false); key(KeyEvent.KEYCODE_MEDIA_PLAY);
+        holdSeek(KeyEvent.KEYCODE_DPAD_RIGHT); long pending = pendingSeekSeconds() * 1000;
+        key(KeyEvent.KEYCODE_HOME); SystemClock.sleep(700);
+        launch(); require(!texts().contains("Playback Playing") && !texts().contains("OK Confirm"), "Background seek survived player exit");
+        org.json.JSONArray records = new org.json.JSONObject(getTargetContext().getSharedPreferences("continue_watching", 0).getString("records", "{}")).getJSONArray("videos");
+        boolean originalSaved = false;
+        for (int i = 0; i < records.length(); i++) if (records.getJSONObject(i).optString("id").equals("jNQXAC9IVRw"))
+            originalSaved = records.getJSONObject(i).optLong("position") < pending - 500;
+        require(originalSaved, "Background seek saved pending target");
+        marker("FEATURE_LIFECYCLE pendingSeekDiscarded=true noAutoResume=true originalCheckpoint=true");
+        search("jNQXAC9IVRw"); waitFor("Me at the zoo", 60, false);
+        openPinnedResult("Me at the zoo", false); waitFor("Playback Playing", 75, true);
+        finishShortVideo(); waitFor("Up next in", 25, true);
+        key(KeyEvent.KEYCODE_HOME); SystemClock.sleep(16000); launch();
+        require(!texts().contains("Playback Playing") && !texts().contains("Up next in"), "Countdown survived background exit");
+        marker("FEATURE_LIFECYCLE backgroundCountdownCancelled=true noAutoAdvance=true");
     }
     private void channelHome() throws Exception {
         // Seed only owned-emulator data; an absent channel ID exercises exact-video
@@ -810,7 +965,11 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             path.equals("/data/local/tmp/aprion-upload-age-home.png") ||
             path.equals("/data/local/tmp/aprion-channel-options.png") || path.equals("/data/local/tmp/aprion-channel-home.png") ||
             path.equals("/data/local/tmp/aprion-channel-player.png") || path.equals("/data/local/tmp/aprion-channel-older.png") ||
-            path.equals("/data/local/tmp/aprion-channel-return.png") || path.equals("/data/local/tmp/aprion-channel-failure.png"), "Unexpected screenshot destination");
+            path.equals("/data/local/tmp/aprion-channel-return.png") || path.equals("/data/local/tmp/aprion-channel-failure.png") ||
+            path.equals("/data/local/tmp/aprion-features-settings.png") || path.equals("/data/local/tmp/aprion-features-seek.png") ||
+            path.equals("/data/local/tmp/aprion-features-counts.png") || path.equals("/data/local/tmp/aprion-features-autoplay.png") ||
+            path.equals("/data/local/tmp/aprion-features-player.png") ||
+            path.equals("/data/local/tmp/aprion-features-failure.png"), "Unexpected screenshot destination");
         try (android.os.ParcelFileDescriptor.AutoCloseInputStream command = new android.os.ParcelFileDescriptor.AutoCloseInputStream(ui().executeShellCommand("screencap -p " + path))) {
             byte[] buffer = new byte[1024]; int total = 0, read;
             while ((read = command.read(buffer)) >= 0) { total += read; require(total <= 8192, "Screenshot command output exceeded bound"); }

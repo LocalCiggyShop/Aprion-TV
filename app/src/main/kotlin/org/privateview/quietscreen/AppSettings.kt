@@ -11,5 +11,8 @@ class AppSettings(context: Context) {
     var captions: Boolean
         get() = preferences.getBoolean("captions", false)
         set(value) { preferences.edit().putBoolean("captions", value).apply() }
+    var autoplay: Boolean
+        get() = preferences.getBoolean("autoplay", true)
+        set(value) { preferences.edit().putBoolean("autoplay", value).apply() }
     fun reset() { preferences.edit().clear().apply() }
 }

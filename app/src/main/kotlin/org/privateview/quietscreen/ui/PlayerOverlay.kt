@@ -55,7 +55,10 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
     playNext: (VideoSummary, Genre?) -> Unit, back: () -> Unit, retry: () -> Unit,
     qualityChoices: () -> List<Pair<String, () -> Unit>>, audioChoices: () -> List<Pair<String, () -> Unit>>,
     feedback: (VideoSummary, RecommendationFeedback) -> Unit = { _, _ -> },
-    openChannel: ((VideoSummary) -> Unit)? = null) {
+    openChannel: ((VideoSummary) -> Unit)? = null,
+    preview: PreviewStoryboard? = null, autoplayEnabled: Boolean = false,
+    beginSeek: () -> SeekSession? = { if (info.canSeek && info.duration > 0) SeekSession(info.position.coerceIn(0, info.duration), info.position.coerceIn(0, info.duration), info.duration, info.playing).also { setPlaying(false) } else null },
+    finishSeek: (SeekSession, Boolean) -> Unit = { session, commit -> if (commit) seek(session.pendingMs - info.position); setPlaying(session.resume) }) {
     var visible by remember(info.video.id) { mutableStateOf(true) }
     var area by remember(info.video.id) { mutableStateOf(PlayerArea.TRANSPORT) }
     var menu by remember(info.video.id) { mutableStateOf<String?>(null) }
@@ -69,10 +72,22 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
     val channelFocus = remember { FocusRequester() }
     val settingsFocus = remember { FocusRequester() }
     val retryFocus = remember { FocusRequester() }
+    val autoplayFocus = remember { FocusRequester() }
     val shelfAction = remember { FocusRequester() }
     val shelf = rememberLazyListState()
     val cardsFocus = remember { mutableMapOf<String, FocusRequester>() }
     val scope = rememberCoroutineScope()
+    var seekSession by remember(info.video.id) { mutableStateOf<SeekSession?>(null) }
+    var heldArrow by remember(info.video.id) { mutableStateOf<Int?>(null) }
+    var arrowHold by remember { mutableStateOf<Job?>(null) }
+    var confirmDown by remember { mutableStateOf(false) }
+    val latestInfo by rememberUpdatedState(info)
+    val currentBeginSeek by rememberUpdatedState(beginSeek)
+    val currentFinishSeek by rememberUpdatedState(finishSeek)
+    val autoplay = remember(info.video.id) { AutoplayCountdown() }
+    var countdown by remember(info.video.id) { mutableStateOf<Int?>(null) }
+    var upNext by remember(info.video.id) { mutableStateOf<VideoSummary?>(null) }
+    var autoplayCancelled by remember(info.video.id) { mutableStateOf(false) }
     var navigation by remember { mutableStateOf<Job?>(null) }
     val rawCards = row.videos.filterNot { it.id == info.video.id }.take(12)
     var pinnedCards by remember(info.video.id) { mutableStateOf<List<VideoSummary>>(emptyList()) }
@@ -82,7 +97,12 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
     var feedbackVideo by remember(info.video.id) { mutableStateOf<VideoSummary?>(null) }
     var feedbackPress by remember(info.video.id) { mutableStateOf<RecommendationMenuPress?>(null) }
     val cards = if (area == PlayerArea.RECOMMENDATIONS && pinnedCards.isNotEmpty()) pinnedCards else rawCards
+    val offeredNext = upNext?.takeIf { next -> rawCards.any { it.id == next.id && !it.live } }
     val currentArea by rememberUpdatedState(area)
+    val currentCards by rememberUpdatedState(rawCards)
+    val currentRow by rememberUpdatedState(row)
+    val currentPlayNext by rememberUpdatedState(playNext)
+    fun cancelAutoplay() { if (latestInfo.ended) { autoplay.cancel(); countdown = null; autoplayCancelled = true } }
     fun freezeShelf() { pinnedCards = rawCards; pinnedOrigins = row.origins.filterKeys { key -> rawCards.any { it.id.value == key } } }
     fun focusShelf(index: Int) {
         navigation?.cancel()
@@ -114,19 +134,56 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
         pinnedCards = emptyList(); pinnedOrigins = emptyMap(); waitingForCard = false
     }
     fun seekBy(delta: Long) {
-        if (info.canSeek) { seek(delta); seekFeedback = if (delta < 0) "−10 seconds" else "+10 seconds" }
-        else seekFeedback = "Seeking isn't available yet"
-        seekPulse++
+        cancelAutoplay()
+        val session = seekSession ?: currentBeginSeek()
+        if (session != null) { seekSession = session.move(delta > 0); navigation?.cancel(); visible = false; area = PlayerArea.VIDEO; videoFocus.requestFocus() }
+        else { seekFeedback = "Seeking isn't available yet"; seekPulse++ }
+    }
+    fun endSeek(commit: Boolean) {
+        val session = seekSession ?: return
+        seekSession = null; heldArrow = null; arrowHold?.cancel(); confirmDown = false
+        currentFinishSeek(session, commit); showTransport()
+    }
+    fun shortArrow(right: Boolean) {
+        if (area == PlayerArea.VIDEO) showTransport()
+        else {
+            area = PlayerArea.OPTIONS
+            lastOption = if (right) { if (openChannel != null) "channel" else "captions" } else "settings"
+        }
     }
     val overlayVisible = visible
     // New failures reveal recovery once; Back can still dismiss an error menu.
-    LaunchedEffect(info.error, info.ended) { if (info.error != null || info.ended) showTransport() }
+    LaunchedEffect(info.error, info.ended) {
+        if (info.error != null) { arrowHold?.cancel(); heldArrow = null; endSeek(false); cancelAutoplay(); showTransport() }
+        else if (info.ended) { enterShelf() }
+        else { autoplayCancelled = false; upNext = null; autoplay.reset() }
+    }
+    LaunchedEffect(info.ended, info.error, autoplayEnabled, rawCards.map { it.id }, autoplayCancelled, seekSession != null) {
+        if (!info.ended || info.error != null || autoplayCancelled || !autoplayEnabled || seekSession != null) {
+            if (info.ended && (!autoplayEnabled || seekSession != null)) cancelAutoplay()
+            countdown = null; return@LaunchedEffect
+        }
+        while (true) {
+            val eligible = currentCards.filterNot { it.live }.map { it.id }
+            val seconds = autoplay.update(true, true, eligible, android.os.SystemClock.elapsedRealtime())
+            if (seconds == null) { countdown = null; break }
+            upNext = currentCards.firstOrNull { it.id == autoplay.next }
+            countdown = seconds
+            if (seconds == 0) {
+                val next = currentCards.firstOrNull { it.id == autoplay.next && !it.live }
+                autoplay.cancel(); countdown = null
+                if (next != null && latestInfo.ended && latestInfo.error == null) currentPlayNext(next, currentRow.origins[next.id.value])
+                break
+            }
+            delay(200)
+        }
+    }
     LaunchedEffect(overlayVisible, menu) {
         if (overlayVisible && menu == null) loadRecommendations(false) else cancelRecommendations()
     }
-    DisposableEffect(Unit) { onDispose { navigation?.cancel(); cancelRecommendations() } }
+    DisposableEffect(Unit) { onDispose { navigation?.cancel(); arrowHold?.cancel(); autoplay.cancel(); cancelRecommendations() } }
     LaunchedEffect(visible, area, menu, interaction, info.playing, info.error) {
-        if (visible && menu == null && feedbackVideo == null && playerAutoHide(info.playing, area, info.error != null)) {
+        if (seekSession == null && visible && menu == null && feedbackVideo == null && playerAutoHide(info.playing, area, info.error != null)) {
             delay(8000); hideControls()
         }
     }
@@ -152,18 +209,50 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
         }
     }
     fun handleBack() {
+        arrowHold?.cancel(); heldArrow = null
         interaction++
         when {
+            seekSession != null -> endSeek(false)
+            countdown != null -> cancelAutoplay()
             overlayVisible || menu != null -> hideControls()
             else -> back()
         }
     }
     BackHandler(onBack = ::handleBack)
     Box(Modifier.fillMaxSize().focusRequester(videoFocus).onPreviewKeyEvent { event ->
+        val code = event.nativeKeyEvent.keyCode
+        val down = event.type == KeyEventType.KeyDown
+        val horizontal = code == android.view.KeyEvent.KEYCODE_DPAD_LEFT || code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT
+        val select = code == android.view.KeyEvent.KEYCODE_DPAD_CENTER || code == android.view.KeyEvent.KEYCODE_ENTER || code == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
+        // Observe Back before cancelling the countdown so its first press only cancels.
+        if (down && code != android.view.KeyEvent.KEYCODE_BACK) cancelAutoplay()
+        if (down && !horizontal && seekSession == null) { arrowHold?.cancel(); heldArrow = null }
+        if (seekSession != null && code != android.view.KeyEvent.KEYCODE_BACK) {
+            when {
+                horizontal && down -> seekSession = seekSession!!.move(code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT, event.nativeKeyEvent.repeatCount)
+                down && (code == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD || code == android.view.KeyEvent.KEYCODE_MEDIA_REWIND) ->
+                    seekSession = seekSession!!.move(code == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, event.nativeKeyEvent.repeatCount)
+                select && down && event.nativeKeyEvent.repeatCount == 0 -> confirmDown = true
+                select && event.type == KeyEventType.KeyUp && confirmDown -> endSeek(true)
+                horizontal && event.type == KeyEventType.KeyUp -> { heldArrow = null; arrowHold?.cancel() }
+            }
+            true
+        } else if (horizontal && (heldArrow == code || (menu == null && feedbackVideo == null && (area == PlayerArea.VIDEO || area == PlayerArea.TRANSPORT)))) {
+            if (down && heldArrow == null) {
+                heldArrow = code
+                arrowHold = scope.launch {
+                    delay(android.view.ViewConfiguration.getLongPressTimeout().toLong())
+                    if (heldArrow == code && latestInfo.error == null) seekBy(if (code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) 10_000 else -10_000)
+                }
+            } else if (event.type == KeyEventType.KeyUp && heldArrow == code) {
+                arrowHold?.cancel(); heldArrow = null; shortArrow(code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
+            }
+            true
+        } else
         // Legacy TV key dispatch can consume Back before the Activity dispatcher.
         // Own both halves of one remote press; repeats/up must not navigate twice.
         if (event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BACK) {
-            if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) handleBack()
+            if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) { arrowHold?.cancel(); heldArrow = null; handleBack() }
             true
         } else if (event.type != KeyEventType.KeyDown) false else {
             interaction++
@@ -188,7 +277,12 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
                             } else enterShelf()
                             true
                         }
-                        PlayerRemoteAction.SHOW_TRANSPORT -> { showTransport(); true }
+                        PlayerRemoteAction.SHOW_TRANSPORT -> {
+                            if (area == PlayerArea.RECOMMENDATIONS && info.ended && offeredNext != null) {
+                                area = PlayerArea.RECOVERY; autoplayFocus.requestFocus()
+                            } else showTransport()
+                            true
+                        }
                         PlayerRemoteAction.HIDE_CONTROLS -> { hideControls(); true }
                         PlayerRemoteAction.NAVIGATE -> if (menu == null && area == PlayerArea.TRANSPORT &&
                             (direction == PlayerDirection.LEFT || direction == PlayerDirection.RIGHT)) {
@@ -213,7 +307,7 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
             .padding(start = 32.dp, end = 32.dp, top = 36.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
                 var focused by remember { mutableStateOf(false) }
-                Button(onClick = togglePlayback, modifier = Modifier.weight(1f).widthIn(max = 570.dp).focusRequester(transportFocus)
+                Button(onClick = { cancelAutoplay(); togglePlayback() }, modifier = Modifier.weight(1f).widthIn(max = 570.dp).focusRequester(transportFocus)
                     .onFocusChanged { if (it.isFocused) area = PlayerArea.TRANSPORT; focused = it.isFocused }
                     .border(if (focused) 1.dp else 0.dp, if (focused) Accent else Color.Transparent, RoundedCornerShape(12.dp))
                     .semantics { contentDescription = if (info.ended) "Replay video" else if (info.playing) "Pause video" else "Play video" },
@@ -224,11 +318,19 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         PlaybackGlyph(if (info.playing) "pause" else "play", Cloud, Modifier.size(22.dp))
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text(info.video.title, color = Cloud, fontSize = 18.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(info.video.title, color = Cloud, fontSize = 18.sp, fontWeight = FontWeight.Medium, maxLines = if (info.ended) 1 else 2, overflow = TextOverflow.Ellipsis)
                             Text(info.video.channel, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            UploadAgeText(info.video)
-                            Text(info.status + if (info.renderedHeight > 0) " · ${info.renderedHeight}p" else "", color = if (info.error == null) Muted else Warning,
-                                fontSize = 11.sp, modifier = Modifier.semantics { contentDescription = "Playback ${info.status}; rendered ${info.renderedHeight}p" })
+                            if (!info.ended) UploadAgeText(info.video)
+                            ViewCount(info.video, full = true)
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                if (!info.ended) Text(info.status + if (info.renderedHeight > 0) " · ${info.renderedHeight}p" else "", color = if (info.error == null) Muted else Warning,
+                                    fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f).semantics { contentDescription = "Playback ${info.status}; rendered ${info.renderedHeight}p" })
+                                else Spacer(Modifier.weight(1f))
+                                Text("${timeLabel(info.position)} / ${timeLabel(info.duration)}", color = Muted, fontSize = 11.sp,
+                                    modifier = Modifier.semantics { contentDescription = "Playback time ${info.position / 1000} of ${info.duration / 1000} seconds" })
+                            }
                         }
                     }
                 }
@@ -236,11 +338,11 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (openChannel != null) OverlayIcon("View channel", "channel", channelFocus,
                         focused = { if (it) { area = PlayerArea.OPTIONS; lastOption = "channel" } },
-                        horizontal = { right -> if (right) captionsFocus.requestFocus() else showTransport() }) { openChannel(info.video) }
+                        horizontal = { right -> if (right) captionsFocus.requestFocus() else showTransport() }) { cancelAutoplay(); openChannel(info.video) }
                     OverlayIcon("Captions", "captions", captionsFocus, focused = { if (it) { area = PlayerArea.OPTIONS; lastOption = "captions" } },
-                        horizontal = { right -> if (right) settingsFocus.requestFocus() else if (openChannel != null) channelFocus.requestFocus() else showTransport() }) { lastOption = "captions"; menu = "captions"; area = PlayerArea.MENU }
+                        horizontal = { right -> if (right) settingsFocus.requestFocus() else if (openChannel != null) channelFocus.requestFocus() else showTransport() }) { cancelAutoplay(); lastOption = "captions"; menu = "captions"; area = PlayerArea.MENU }
                     OverlayIcon("Settings", "settings", settingsFocus, focused = { if (it) { area = PlayerArea.OPTIONS; lastOption = "settings" } },
-                        horizontal = { right -> if (right) showTransport() else captionsFocus.requestFocus() }) { lastOption = "settings"; menu = "settings"; area = PlayerArea.MENU }
+                        horizontal = { right -> if (right) showTransport() else captionsFocus.requestFocus() }) { cancelAutoplay(); lastOption = "settings"; menu = "settings"; area = PlayerArea.MENU }
                 }
             }
             Box(Modifier.fillMaxWidth().height(4.dp).background(Color.White.copy(alpha = .3f), RoundedCornerShape(2.dp))
@@ -248,17 +350,24 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
                 Box(Modifier.fillMaxWidth(if (info.duration > 0) (info.position.toFloat() / info.duration).coerceIn(0f, 1f) else 0f)
                     .height(4.dp).background(Accent, RoundedCornerShape(2.dp)))
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(timeLabel(info.position), color = Muted, fontSize = 11.sp)
-                Text(timeLabel(info.duration), color = Muted, fontSize = 11.sp)
-            }
             if (info.error != null) TvAction("Try playback again", Modifier.focusRequester(retryFocus)
                 .onFocusChanged { if (it.isFocused) area = PlayerArea.RECOVERY }) { retry(); showTransport() }
+            if (info.ended && offeredNext != null) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text((if (countdown != null) "Up next in $countdown seconds · " else "Autoplay cancelled · ") + offeredNext.title,
+                        modifier = Modifier.weight(1f), color = Accent, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    TvAction("Play now", Modifier.focusRequester(autoplayFocus).onFocusChanged { if (it.isFocused) area = PlayerArea.RECOVERY }) {
+                        val next = rawCards.firstOrNull { it.id == upNext?.id && !it.live }
+                        cancelAutoplay(); if (next != null) playNext(next, row.origins[next.id.value])
+                    }
+                    TvAction("Cancel autoplay", Modifier.onFocusChanged { if (it.isFocused) area = PlayerArea.RECOVERY }, onClick = ::cancelAutoplay)
+                }
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Recommended" + if (row.contextual) " · ${row.hint}" else "", color = Cloud, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Text(if (area == PlayerArea.RECOMMENDATIONS) "↑ Playback · OK Watch · Hold OK / Menu Tune" else "↓ Explore videos", color = Muted, fontSize = 11.sp)
             }
-            LazyRow(state = shelf, modifier = Modifier.fillMaxWidth().height(if (area == PlayerArea.RECOMMENDATIONS) 206.dp else 68.dp),
+            LazyRow(state = shelf, modifier = Modifier.fillMaxWidth().height(if (info.ended || area == PlayerArea.RECOMMENDATIONS) 230.dp else 68.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(4.dp)) {
                 itemsIndexed(cards, key = { _, video -> video.id.value }) { index, video ->
                     val focus = remember(video.id) { FocusRequester() }
@@ -271,7 +380,7 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
                                 Key.DirectionRight -> { if (index < cards.lastIndex) focusShelf(index + 1) else shelfAction.requestFocus(); true }
                                 else -> false
                             }
-                        }) { playNext(video, (if (pinnedCards.isNotEmpty()) pinnedOrigins else row.origins)[video.id.value]) }
+                        }) { cancelAutoplay(); playNext(video, (if (pinnedCards.isNotEmpty()) pinnedOrigins else row.origins)[video.id.value]) }
                 }
                 item(key = "action") {
                     Column(Modifier.width(210.dp).height(156.dp).background(Panel, RoundedCornerShape(12.dp)).padding(12.dp), verticalArrangement = Arrangement.Center) {
@@ -283,6 +392,7 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
                             .onPreviewKeyEvent { event -> if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
                                 if (cards.isEmpty()) showTransport() else focusShelf(cards.lastIndex); true
                             } else false }) {
+                            cancelAutoplay()
                             if (row.busy) cancelRecommendations() else {
                                 pinnedCards = emptyList(); pinnedOrigins = emptyMap(); waitingForCard = true; loadRecommendations(true)
                             }
@@ -291,8 +401,9 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
                 }
             }
             Text(when (area) { PlayerArea.OPTIONS -> "←/→ Choose button · OK Open · ↓ Playback"; PlayerArea.RECOMMENDATIONS -> "←/→ Browse · OK Watch · Back Hide controls";
-                else -> "←/→ Choose button · OK Pause / play · ↓ Recommended · Back Hide controls" }, color = Muted, fontSize = 10.sp)
+                else -> "←/→ Choose button · Hold ←/→ Seek · OK Pause / play · ↓ Recommended · Back Hide controls" }, color = Muted, fontSize = 10.sp)
         }
+        if (seekSession != null) SeekOverlay(seekSession!!, preview)
         menu?.let { currentMenu ->
             val choices = remember(currentMenu, info.choicesRevision, info.hasPlan, info.fixedQuality, info.requestedHeight) {
                 when (currentMenu) {
@@ -420,12 +531,12 @@ private fun PlaybackGlyph(kind: String, tint: Color, modifier: Modifier) = Canva
 @Composable
 internal fun CompactVideoCard(video: VideoSummary, modifier: Modifier, play: () -> Unit) {
     var selected by remember { mutableStateOf(false) }
-    Button(onClick = play, modifier = modifier.width(200.dp).height(200.dp).onFocusChanged { selected = it.isFocused }
+    Button(onClick = play, modifier = modifier.width(200.dp).height(224.dp).onFocusChanged { selected = it.isFocused }
         .semantics { contentDescription = "Play ${video.title}" }
         .border(if (selected) 2.dp else 0.dp, if (selected) Accent else Color.Transparent, RoundedCornerShape(10.dp)),
         contentPadding = PaddingValues(0.dp), shape = ButtonDefaults.shape(shape = RoundedCornerShape(10.dp)),
         scale = ButtonDefaults.scale(focusedScale = 1f), colors = ButtonDefaults.colors(containerColor = Panel, focusedContainerColor = Panel, contentColor = Cloud, focusedContentColor = Cloud)) {
-        Column {
+        Column(Modifier.fillMaxSize()) {
             Box { Thumbnail(video.thumbnail, Modifier.width(200.dp).height(112.dp))
                 Text(video.durationSeconds?.let { timeLabel(it * 1000) } ?: "VIDEO", color = Cloud, fontSize = 10.sp,
                     modifier = Modifier.align(Alignment.BottomEnd).padding(5.dp).background(Color.Black.copy(alpha = .8f), RoundedCornerShape(3.dp)).padding(3.dp)) }
@@ -433,6 +544,8 @@ internal fun CompactVideoCard(video: VideoSummary, modifier: Modifier, play: () 
             UploadAgeText(video, modifier = Modifier.padding(horizontal = 8.dp))
             Text(video.channel, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(horizontal = 8.dp).padding(top = 2.dp, bottom = 4.dp))
+            Spacer(Modifier.weight(1f))
+            ViewCount(video, Modifier.align(Alignment.End).padding(end = 8.dp, bottom = 5.dp))
         }
     }
 }

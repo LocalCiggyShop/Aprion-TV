@@ -33,7 +33,8 @@ class NewPipeCatalog : VideoCatalog, StreamResolver, ChannelCatalog {
         VideoSummary(VideoId(service.streamLHFactory.getId(item.url)), item.name.take(500), item.uploaderName.orEmpty().take(200),
             item.thumbnails.firstOrNull()?.url?.takeIf { runCatching { NetworkPolicy.validate(it, NetworkRole.THUMBNAIL) }.isSuccess },
             item.duration.takeIf { it >= 0 }, item.streamType == StreamType.LIVE_STREAM, channelId,
-            runCatching { item.uploadDate?.instant?.toEpochMilli()?.takeIf { it > 0 } }.getOrNull())
+            runCatching { item.uploadDate?.instant?.toEpochMilli()?.takeIf { it > 0 } }.getOrNull(),
+            runCatching { item.viewCount.takeIf { it >= 0 } }.getOrNull())
     }.getOrNull()
 
     private suspend fun <T> extract(block: () -> T): T = withContext(Dispatchers.IO) {
@@ -170,7 +171,16 @@ class NewPipeCatalog : VideoCatalog, StreamResolver, ChannelCatalog {
             genre = runCatching { GenreClassifier.providerCategory(e.category) }.getOrNull(), related = related,
             uploadedAtMs = runCatching { e.uploadDate?.instant?.toEpochMilli()?.takeIf { it > 0 } }.getOrNull(),
             channelId = runCatching { channelPath.find(e.uploaderUrl.orEmpty())?.groupValues?.get(1) }.getOrNull(),
-            channel = runCatching { e.uploaderName?.take(200) }.getOrNull())
+            channel = runCatching { e.uploaderName?.take(200) }.getOrNull(),
+            viewCount = runCatching { e.viewCount.takeIf { it >= 0 } }.getOrNull(),
+            preview = runCatching { e.frames.take(8).sortedBy { kotlin.math.abs(it.frameWidth - 160) }.firstNotNullOfOrNull { frames ->
+                runCatching {
+                    require(frames.urls.size in 1..256)
+                    val urls = frames.urls.map { raw -> NetworkPolicy.validate(raw, NetworkRole.THUMBNAIL); MediaEndpoint(raw) }
+                    PreviewStoryboard(urls, frames.frameWidth, frames.frameHeight, frames.framesPerPageX, frames.framesPerPageY,
+                        frames.totalCount, frames.durationPerFrame.toLong())
+                }.getOrNull()
+            } }.getOrNull())
     }
 
     companion object { private val mutex = Mutex() }

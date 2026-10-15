@@ -84,6 +84,7 @@ internal fun RecommendationFeedbackDialog(video: VideoSummary, close: () -> Unit
             Text(if (openChannel != null) "Video options" else "Tune recommendations", color = Cloud, fontSize = 21.sp)
             Text(video.title.take(200), color = Muted, fontSize = 14.sp, maxLines = 2)
             UploadAgeText(video, fontSize = 14.sp)
+            ViewCount(video, full = true)
             saved?.let { Text("Saved: ${it.label}. Press Back to return.", color = Muted, fontSize = 13.sp, maxLines = 2) }
             (RecommendationFeedback.entries.map { it.label to { select(it) } } +
                 (if (openChannel != null) listOf("View channel" to openChannel) else emptyList()) + ("Cancel" to close)).forEachIndexed { index, (label, action) ->
