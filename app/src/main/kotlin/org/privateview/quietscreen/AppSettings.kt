@@ -11,6 +11,9 @@ class AppSettings(context: Context) {
     var captions: Boolean
         get() = preferences.getBoolean("captions", false)
         set(value) { preferences.edit().putBoolean("captions", value).apply() }
+    var soundLimiter: Boolean
+        get() = preferences.getBoolean("sound_limiter", true)
+        set(value) { preferences.edit().putBoolean("sound_limiter", value).apply() }
     var autoplay: Boolean
         get() = preferences.getBoolean("autoplay", true)
         set(value) { preferences.edit().putBoolean("autoplay", value).apply() }

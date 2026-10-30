@@ -44,7 +44,7 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val controller = remember(video.id) { PlayerController(context, resolver, scope) }
+    val controller = remember(video.id) { PlayerController(context, resolver, scope, soundLimiterEnabled = settings.soundLimiter) }
     val status by controller.status.collectAsStateWithLifecycle()
     val view = remember(controller) { PlayerView(context).apply {
         player = controller.player; useController = false; isFocusable = false; isFocusableInTouchMode = false

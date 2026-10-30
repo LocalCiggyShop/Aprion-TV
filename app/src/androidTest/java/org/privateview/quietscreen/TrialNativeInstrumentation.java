@@ -75,7 +75,9 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         // Idle-network checks run with optional update traffic disabled, then restore the preference.
         updatePreferences.edit().putBoolean("automatic", false).commit();
         try {
-            if ("featureSuggestions".equals(check)) {
+            if ("featureLimiter".equals(check)) {
+                featureLimiter(); passed++; result.putString("stream", "\nOK (1 player feature limiter check)\n");
+            } else if ("featureSuggestions".equals(check)) {
                 featureSuggestions(); passed++; result.putString("stream", "\nOK (1 player feature suggestions check)\n");
             } else if ("featureCaptions".equals(check)) {
                 featureCaptions(); passed++; result.putString("stream", "\nOK (1 player feature captions check)\n");
@@ -224,6 +226,31 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             SystemClock.sleep(300);
         }
         throw new AssertionError("Channel page " + page + " unavailable");
+    }
+    private void featureLimiter() throws Exception {
+        android.content.SharedPreferences prefs = getTargetContext().getSharedPreferences("playback_preferences", 0);
+        prefs.edit().remove("sound_limiter").commit();
+        launch(); clickChannelButton("Settings"); waitFor("Sound limiter: On", 10, false);
+        clickChannelButton("Sound limiter: On"); waitFor("Sound limiter: Off", 5, false);
+        require(!prefs.getBoolean("sound_limiter", true), "Limiter Off not persisted");
+        launch(); clickChannelButton("Settings"); waitFor("Sound limiter: Off", 10, false);
+        search("dQw4w9WgXcQ"); waitFor("Never Gonna Give You Up", 60, false);
+        openPinnedResult("Never Gonna Give You Up", true); waitFor("Playback Playing", 75, true);
+        observePlayback(2); key(KeyEvent.KEYCODE_MEDIA_PAUSE); waitFor("Playback Paused", 10, true);
+        key(KeyEvent.KEYCODE_HOME); SystemClock.sleep(500); launch(); clickChannelButton("Settings");
+        for (int i=0; i<8 && channelButton("Reset playback settings", true)==null; i++) {
+            for (AccessibilityNodeInfo node:nodes()) if (node.isScrollable()) { node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD); break; }
+            SystemClock.sleep(250);
+        }
+        clickChannelButton("Reset playback settings");
+        require(prefs.getBoolean("sound_limiter", true), "Reset failed to restore default limiter");
+        launch(); clickChannelButton("Settings"); waitFor("Sound limiter: On", 10, false);
+        capturePlayer("/data/local/tmp/aprion-features-settings.png");
+        search("dQw4w9WgXcQ"); waitFor("Never Gonna Give You Up", 60, false);
+        openPinnedResult("Never Gonna Give You Up", true); waitFor("Playback Playing", 75, true);
+        observePlayback(2); key(KeyEvent.KEYCODE_MEDIA_PAUSE); waitFor("Playback Paused", 10, true);
+        key(KeyEvent.KEYCODE_HOME); SystemClock.sleep(500);
+        marker("FEATURE_LIMITER defaultOn=true offPersists=true offPlayback=true resetOn=true onPlayback=true lifecycleReleased=true");
     }
     private void featureSettings() throws Exception {
         android.content.SharedPreferences prefs = getTargetContext().getSharedPreferences("playback_preferences", 0);

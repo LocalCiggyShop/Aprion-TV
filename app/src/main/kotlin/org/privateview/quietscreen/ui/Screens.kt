@@ -215,6 +215,7 @@ fun SettingsScreen(settings: AppSettings, updates: UpdateManager, personalizatio
     var message by remember { mutableStateOf("Preferences stay on this device.") }
     var personalized by remember { mutableStateOf(personalization.enabled) }
     var autoplay by remember { mutableStateOf(settings.autoplay) }
+    var soundLimiter by remember { mutableStateOf(settings.soundLimiter) }
     var personalizationMessage by remember { mutableStateOf("All genre categories remain available.") }
     LaunchedEffect(Unit) { first.requestFocus() }
     BackHandler(onBack = home)
@@ -229,12 +230,15 @@ fun SettingsScreen(settings: AppSettings, updates: UpdateManager, personalizatio
             }
         }
         Text("To change a video's language or audio track, open Settings while it plays. Select CC to turn captions on, choose a language or turn them off.", color = Muted, fontSize = 14.sp)
+        Text("Sound limiter", color = Cloud, fontSize = 19.sp)
+        Text("Reduce loud peaks without boosting quiet audio. The TV remote still controls overall volume. Applies when a video starts.", color = Muted, fontSize = 14.sp)
+        TvAction("Sound limiter: " + if (soundLimiter) "On" else "Off") { soundLimiter = !soundLimiter; settings.soundLimiter = soundLimiter }
         Text("Autoplay", color = Cloud, fontSize = 19.sp)
         Text("Play the next recommendation after a 15-second countdown when a video ends. You can cancel each countdown.", color = Muted, fontSize = 14.sp)
         TvAction("Autoplay: " + if (autoplay) "On" else "Off") { autoplay = !autoplay; settings.autoplay = autoplay }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             TvAction("Clear browsing session") { clearSession(); message = "Search results and saved watch history cleared. Your learned preferences are kept." }
-            TvAction("Reset playback settings") { settings.reset(); height = settings.maxHeight; autoplay = settings.autoplay; message = "Playback settings restored to their defaults." }
+            TvAction("Reset playback settings") { settings.reset(); height = settings.maxHeight; autoplay = settings.autoplay; soundLimiter = settings.soundLimiter; message = "Playback settings restored to their defaults." }
         }
         Text(message, color = Accent, fontSize = 14.sp)
         Text("Recommended for you", color = Cloud, fontSize = 19.sp)

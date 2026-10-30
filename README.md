@@ -27,7 +27,7 @@ Built for **Android TV and Google TV running Android 8.0 or later**.
 2. Open Downloader, enter the APK link below and select **Go**:
 
    ```text
-   https://github.com/LocalCiggyShop/Aprion-TV/releases/download/v0.3.12-beta/Aprion-TV.apk
+   https://github.com/LocalCiggyShop/Aprion-TV/releases/download/v0.3.13-beta/Aprion-TV.apk
    ```
 
 3. If your TV asks, allow **Downloader** to install apps from this source. Return to Downloader and select **Install**, then **Open**.
@@ -45,6 +45,7 @@ Requires Android 8.0 or later. Samsung Tizen and LG webOS TVs cannot install thi
 | **Search** | Find videos and sort loaded results by newest first or relevance. Load more results as you browse. |
 | **Channel browsing** | Open a creator's regular uploads, browse older videos and return to the same channel after playback. |
 | **Continue watching** | Resume unfinished videos from saved playback positions. |
+| **Sound limiter** | Enabled by default to reduce loud peaks without boosting quiet audio. Turn it off in Settings; your TV remote still controls overall volume. |
 | **Native playback** | Use remote controls to play, pause and choose available video quality and audio tracks. |
 | **Preview seeking** | Hold Left or Right to choose a position, then press OK to seek or Back to cancel. Preview images appear when available. |
 | **Video chapters** | While seeking, press Up to snap between available chapters with Left/Right. Down returns to time seeking; OK confirms and Back cancels. |

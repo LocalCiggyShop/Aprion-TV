@@ -17,12 +17,12 @@ data class PlaybackStatus(val text: String = "Ready", val error: ErrorCode? = nu
 data class TrackChoice(val key: String, val label: String, val selected: Boolean)
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-class PlayerController(private val context: Context, private val resolver: StreamResolver, private val scope: CoroutineScope, enableEmulatorProfile: Boolean = false) {
+class PlayerController(private val context: Context, private val resolver: StreamResolver, private val scope: CoroutineScope, enableEmulatorProfile: Boolean = false, soundLimiterEnabled: Boolean = true) {
     private val emulatorProfile = emulatorPlaybackProfileEnabled(
         context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0,
         android.os.Build.HARDWARE, enableEmulatorProfile)
     private val tracks = DefaultTrackSelector(context)
-    val player: ExoPlayer = ExoPlayer.Builder(context).setTrackSelector(tracks)
+    val player: ExoPlayer = (if (soundLimiterEnabled) ExoPlayer.Builder(context, SoundLimiterRenderers(context)) else ExoPlayer.Builder(context)).setTrackSelector(tracks)
         .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(15000, 40000, 1500, 3000).setTargetBufferBytes(48 * 1024 * 1024).build()).build()
         .apply { setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true) }
     private val sources = MediaSourceFactory()
