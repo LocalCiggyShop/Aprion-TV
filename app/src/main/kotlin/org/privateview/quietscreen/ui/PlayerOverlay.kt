@@ -45,7 +45,7 @@ internal data class PlayerOverlayInfo(val video: VideoSummary, val position: Lon
     val playing: Boolean, val ended: Boolean, val status: String, val renderedHeight: Int = 0,
     val error: ErrorCode? = null, val hasPlan: Boolean = false, val canSeek: Boolean = false,
     val requestedHeight: Int = 1080, val fixedQuality: Boolean = false, val choicesRevision: Int = 0,
-    val buffering: Boolean = false)
+    val buffering: Boolean = false, val captionError: Boolean = false)
 
 /** Pure presentation: decoder/lifecycle/history stay in PlayerScreen. */
 @Composable
@@ -56,6 +56,8 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
     qualityChoices: () -> List<Pair<String, () -> Unit>>, audioChoices: () -> List<Pair<String, () -> Unit>>,
     feedback: (VideoSummary, RecommendationFeedback) -> Unit = { _, _ -> },
     openChannel: ((VideoSummary) -> Unit)? = null,
+    captionChoices: () -> List<Pair<String, () -> Unit>> = { emptyList() },
+    updateCaptionLayout: (Boolean, Boolean) -> Unit = { _, _ -> },
     preview: PreviewStoryboard? = null, autoplayEnabled: Boolean = false, chapters: List<VideoChapter> = emptyList(),
     beginSeek: () -> SeekSession? = { if (info.canSeek && info.duration > 0) SeekSession(info.position.coerceIn(0, info.duration), info.position.coerceIn(0, info.duration), info.duration, info.playing).also { setPlaying(false) } else null },
     finishSeek: (SeekSession, Boolean) -> Unit = { session, commit -> if (commit) seek(session.pendingMs - info.position); setPlaying(session.resume) }) {
@@ -155,6 +157,9 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
         }
     }
     val overlayVisible = visible
+    LaunchedEffect(info.video.id, overlayVisible, menu != null, seekSession != null, feedbackVideo != null) {
+        updateCaptionLayout(overlayVisible, menu != null || seekSession != null || feedbackVideo != null)
+    }
     // New failures reveal recovery once; Back can still dismiss an error menu.
     LaunchedEffect(info.error, info.ended) {
         if (info.error != null) { arrowHold?.cancel(); heldArrow = null; endSeek(false); cancelAutoplay(); showTransport() }
@@ -423,17 +428,20 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
                         "Audio track" to { menu = "audio" }) else emptyList()
                     "quality" -> qualityChoices()
                     "audio" -> audioChoices()
+                    "captions" -> if (info.hasPlan) captionChoices() else emptyList()
                     else -> emptyList()
                 }
             }
             PlayerChoicePanel(if (currentMenu == "quality") "Video quality" else currentMenu.replaceFirstChar { it.uppercase() }, choices,
                 explanation = when {
-                    currentMenu == "captions" -> "Captions aren't available in this version yet."
+                    currentMenu == "captions" && info.captionError -> "Captions couldn't load. Video keeps playing. Choose a language to retry."
+                    currentMenu == "captions" && !info.hasPlan -> "Caption options will appear once the video loads."
+                    currentMenu == "captions" && choices.size <= 1 -> "This video has no available captions."
                     currentMenu == "settings" && !info.hasPlan -> "Quality and audio options will appear once the video loads."
                     else -> null
                 }, close = ::closeMenu, select = { choice ->
                     choice(); interaction++
-                    if (currentMenu == "quality" || currentMenu == "audio") { menu = null; area = PlayerArea.OPTIONS }
+                    if (currentMenu == "quality" || currentMenu == "audio" || currentMenu == "captions") { menu = null; area = PlayerArea.OPTIONS }
                 })
         }
     }

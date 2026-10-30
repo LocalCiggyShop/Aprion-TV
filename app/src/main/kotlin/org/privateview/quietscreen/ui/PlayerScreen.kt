@@ -15,6 +15,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.Player
+import androidx.media3.common.text.Cue
+import androidx.media3.common.text.CueGroup
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -46,6 +49,16 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
     val view = remember(controller) { PlayerView(context).apply {
         player = controller.player; useController = false; isFocusable = false; isFocusableInTouchMode = false
     } }
+    // Keep PlayerView's native caption surface in its original view hierarchy.
+    // No second player, clock, polling job or per-cue Compose state is needed.
+    val captions = remember(view) { view.subtitleView?.apply {
+        isFocusable = false; isFocusableInTouchMode = false
+        importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        setApplyEmbeddedStyles(false); setApplyEmbeddedFontSizes(false)
+        setStyle(CaptionStyleCompat(android.graphics.Color.WHITE, 0xB3000000.toInt(), android.graphics.Color.TRANSPARENT,
+            CaptionStyleCompat.EDGE_TYPE_OUTLINE, android.graphics.Color.BLACK, android.graphics.Typeface.DEFAULT))
+        setFractionalTextSize(.045f)
+    } }
     var position by remember { mutableLongStateOf(0) }
     var duration by remember { mutableLongStateOf(0) }
     var playing by remember { mutableStateOf(false) }
@@ -71,7 +84,7 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
     }
 
     LaunchedEffect(controller) {
-        // External captions failed qualification; keep them disabled in this trial.
+        // Captions start off for each video; enable them explicitly using CC.
         controller.setDefaultCaptions(false)
         controller.start(video.id, settings.maxHeight, startPositionMs = startPositionMs)
     }
@@ -96,6 +109,14 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val watchListener = object : Player.Listener {
             private var endedReported = false
+            override fun onCues(cueGroup: CueGroup) {
+                // Provider font sizes/absolute regions can cover controls or become
+                // unreadable on a TV. Use the app's centered caption region instead.
+                captions?.setCues(cueGroup.cues.map { cue -> if (cue.text == null) cue else cue.buildUpon()
+                    .setLine(Cue.DIMEN_UNSET, Cue.TYPE_UNSET).setLineAnchor(Cue.TYPE_UNSET)
+                    .setPosition(Cue.DIMEN_UNSET).setPositionAnchor(Cue.TYPE_UNSET).setSize(Cue.DIMEN_UNSET)
+                    .setTextAlignment(android.text.Layout.Alignment.ALIGN_CENTER).build() })
+            }
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (!released) buffering = playbackState == Player.STATE_BUFFERING
                 if (playbackState != Player.STATE_ENDED) endedReported = false
@@ -136,7 +157,11 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
             controller.plan != null && !released,
             !released && controller.plan != null && controller.player.isCurrentMediaItemSeekable &&
                 controller.player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) && duration > 0,
-            status.requestedHeight, status.fixedQuality, status.trackRevision, buffering), recommendationRow,
+            status.requestedHeight, status.fixedQuality, status.trackRevision, buffering, status.captionError), recommendationRow,
+            updateCaptionLayout = { controls, modal -> captions?.apply {
+                setBottomPaddingFraction(if (controls) .54f else .08f)
+                visibility = if (modal) android.view.View.INVISIBLE else android.view.View.VISIBLE
+            } },
             loadRecommendations = { refresh -> recommendations?.loadRow("recommended", retry = refresh) },
             cancelRecommendations = { recommendations?.cancel() },
             togglePlayback = {
@@ -150,6 +175,7 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
             back = ::leavePlayer, retry = { if (!released) controller.start(video.id, settings.maxHeight, startPositionMs = position.takeIf { it > 0 } ?: startPositionMs) },
             qualityChoices = { listOf("Auto (up to ${settings.maxHeight}p)" to { controller.selectQuality(null, settings.maxHeight) }) +
                 controller.qualityHeights().map { height -> "${height}p" to { controller.selectQuality(height, settings.maxHeight) } } },
+            captionChoices = { controller.captionChoices().map { choice -> (choice.label + if (choice.selected) " ✓" else "") to { controller.selectCaption(choice.key) } } },
             audioChoices = { controller.audioChoices().map { choice -> (choice.label + if (choice.selected) " ✓" else "") to { controller.selectAudio(choice.key) } } }, feedback = feedback,
             openChannel = openChannel?.let { open -> { target -> if (!released) {
                 val resolved = if (target.id == video.id) target.copy(channelId = controller.plan?.channelId ?: target.channelId,

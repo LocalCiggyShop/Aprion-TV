@@ -147,9 +147,9 @@ class PlayerOverlayContractTest {
             key(KeyEvent.KEYCODE_DPAD_CENTER); await { focused().contains("Play video") }
             assertFalse(playing)
             key(KeyEvent.KEYCODE_DPAD_RIGHT); await { focused().trim() == "Captions" }
-            key(KeyEvent.KEYCODE_DPAD_CENTER); await { text().contains("Captions aren't available in this version yet.") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER); await { text().contains("This video has no available captions.") }
             assertEquals(30_000, position)
-            key(KeyEvent.KEYCODE_BACK); await { !text().contains("Recommended") && !text().contains("Captions aren't") }
+            key(KeyEvent.KEYCODE_BACK); await { !text().contains("Recommended") && !text().contains("This video has no") }
             assertEquals(0, backCalls)
             key(KeyEvent.KEYCODE_DPAD_UP); await { focused().trim() == "Captions" }
             key(KeyEvent.KEYCODE_DPAD_RIGHT); await { focused().trim() == "Settings" }

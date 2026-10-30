@@ -14,6 +14,16 @@ class NetworkPolicyTest {
         assertThrows(PolicyViolation::class.java) { NetworkPolicy.validate("https://www.youtube.com/", NetworkRole.MEDIA) }
         assertThrows(PolicyViolation::class.java) { NetworkPolicy.validate("https://evilgooglevideo.com/", NetworkRole.MEDIA) }
     }
+    @Test fun suggestionsUseOnlyTheirExactEndpointAndRole() {
+        val url = "https://suggestqueries-clients6.youtube.com/complete/search?client=youtube&ds=yt&gl=AU&q=m&xhr=t"
+        assertEquals("suggestqueries-clients6.youtube.com", NetworkPolicy.validate(url, NetworkRole.SUGGESTION).host)
+        for (role in listOf(NetworkRole.METADATA, NetworkRole.MEDIA, NetworkRole.THUMBNAIL))
+            assertThrows(PolicyViolation::class.java) { NetworkPolicy.validate(url, role) }
+        for (bad in listOf(url.replace("/complete/search", "/other"), url + "&q=again", url + "&extra=1",
+            url + "#fragment", url.replace("q=m", "q="), url.replace("gl=AU", "gl=US"),
+            url.replace("youtube.com", "youtube.com.evil.test"), "https://www.youtube.com/"))
+            assertThrows(PolicyViolation::class.java) { NetworkPolicy.validate(bad, NetworkRole.SUGGESTION) }
+    }
     @Test fun rejectsNonPublicDestinationsIncludingIpv6() {
         listOf("127.0.0.1", "10.1.1.1", "192.168.0.1", "169.254.169.254", "100.64.0.1", "198.18.0.1", "::1", "fe80::1", "fd00::1", "2001:db8::1").forEach { assertFalse(it, NetworkPolicy.isPublic(InetAddress.getByName(it))) }
         assertTrue(NetworkPolicy.isPublic(InetAddress.getByName("8.8.8.8")))

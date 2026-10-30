@@ -7,18 +7,32 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.privateview.quietscreen.core.*
 
-data class SearchState(val query: String = "", val videos: List<VideoSummary> = emptyList(), val cursor: String? = null, val message: String = "Find a video by title, channel or video ID.", val busy: Boolean = false, val error: ErrorCode? = null, val sort: SearchSort = SearchSort.NEWEST)
+data class SearchState(val query: String = "", val videos: List<VideoSummary> = emptyList(), val cursor: String? = null, val message: String = "Find a video by title, channel or video ID.", val busy: Boolean = false, val error: ErrorCode? = null, val sort: SearchSort = SearchSort.NEWEST, val suggestions: List<String> = emptyList())
 
-class SearchViewModel(private val catalog: VideoCatalog) : ViewModel() {
+class SearchViewModel(private val catalog: VideoCatalog, suggestions: SearchSuggestions? = null) : ViewModel() {
     private val mutable = MutableStateFlow(SearchState())
     val state = mutable.asStateFlow()
+    private val completions = suggestions?.let { provider -> SearchSuggestionSession(viewModelScope, provider) { choices ->
+        mutable.value = mutable.value.copy(suggestions = choices)
+    } }
     private var job: Job? = null
     private var generation = 0
     private var lastQuery = ""
     var focusedVideo: String? = null
     var listIndex = 0
     var listOffset = 0
-    fun setQuery(value: String) { mutable.value = mutable.value.copy(query = value.take(200)) }
+    fun setQuery(value: String) {
+        val query = value.take(200)
+        if (query == mutable.value.query) return
+        mutable.value = mutable.value.copy(query = query)
+        completions?.update(query)
+    }
+    fun dismissSuggestions() { completions?.dismiss() }
+    fun chooseSuggestion(value: String) {
+        if (value !in mutable.value.suggestions) return
+        mutable.value = mutable.value.copy(query = value)
+        search()
+    }
     fun sort(value: SearchSort) {
         if (value == mutable.value.sort) return
         cancel()
@@ -27,6 +41,7 @@ class SearchViewModel(private val catalog: VideoCatalog) : ViewModel() {
         if (mutable.value.query.isNotBlank()) search()
     }
     fun search(more: Boolean = false) {
+        dismissSuggestions()
         if (more && (mutable.value.cursor == null || mutable.value.busy)) return
         val q = if (more) lastQuery else mutable.value.query.trim()
         if (q.isEmpty()) { mutable.value = mutable.value.copy(message = ErrorCode.INVALID_QUERY.userMessage(), error = ErrorCode.INVALID_QUERY); return }
@@ -53,7 +68,7 @@ class SearchViewModel(private val catalog: VideoCatalog) : ViewModel() {
             } }
         }
     }
-    fun cancel() { generation++; job?.cancel(); catalog.cancelPending(); mutable.value = mutable.value.copy(busy = false, message = if (mutable.value.busy) "Search cancelled." else mutable.value.message) }
-    fun clear() { cancel(); lastQuery = ""; focusedVideo = null; listIndex = 0; listOffset = 0; mutable.value = SearchState() }
+    fun cancel() { dismissSuggestions(); generation++; job?.cancel(); catalog.cancelPending(); mutable.value = mutable.value.copy(busy = false, message = if (mutable.value.busy) "Search cancelled." else mutable.value.message) }
+    fun clear() { cancel(); completions?.clear(); lastQuery = ""; focusedVideo = null; listIndex = 0; listOffset = 0; mutable.value = SearchState() }
     override fun onCleared() { cancel() }
 }

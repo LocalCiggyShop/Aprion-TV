@@ -21,6 +21,22 @@ Aprion TV lets you discover, search and watch public YouTube videos through a na
 
 Built for **Android TV and Google TV running Android 8.0 or later**.
 
+## Install on your TV
+
+1. On your Android TV or Google TV, install **[Downloader by AFTVnews](https://play.google.com/store/apps/details?id=com.esaba.downloader)** from Google Play. Check that the publisher is **AFTVnews.com**; the [developer's official page](https://www.aftvnews.com/downloader/) links to the genuine app.
+2. Open Downloader, enter the APK link below and select **Go**:
+
+   ```text
+   https://github.com/LocalCiggyShop/Aprion-TV/releases/download/v0.3.12-beta/Aprion-TV.apk
+   ```
+
+3. If your TV asks, allow **Downloader** to install apps from this source. Return to Downloader and select **Install**, then **Open**.
+4. After installation, turn off Downloader's installation permission again. You can delete the downloaded APK file.
+
+For later updates, use **Aprion TV → Settings → Check for updates**. Approve installation when your TV asks. Keep an existing Aprion TV installation in place to retain its settings and saved positions.
+
+Requires Android 8.0 or later. Samsung Tizen and LG webOS TVs cannot install this Android APK; use a compatible Android TV or Google TV device connected to the TV.
+
 ## Features
 
 | | What you can do |
@@ -38,13 +54,14 @@ Built for **Android TV and Google TV running Android 8.0 or later**.
 
 ## Your preferences stay on your device
 
-Aprion TV has **no sign-in, analytics or ad SDK**. Recommendation preferences, feedback and resume positions are stored locally. Search queries and catalog results stay in memory.
+Aprion TV has **no sign-in, analytics or ad SDK**. Recommendation preferences, feedback and resume positions are stored locally. Search queries and catalog results stay in memory. While typing, partial search text is sent to YouTube for suggestions.
 
 When personalisation is enabled, discovery may send up to two learned topic words to YouTube. Stored viewing lists, feedback and preference scores are not uploaded. Video requests contact YouTube and its media servers; update requests contact GitHub.
 
 ## Good to know
 
-- Captions are currently unsupported.
+- Search suggestions appear as you type; choose one or submit your own search.
+- Captions: select CC during playback to choose an available language or turn captions off. Captions follow playback and seeking; availability depends on the video.
 - Search sorting applies to loaded results, rather than every matching video on YouTube.
 - YouTube changes can interrupt browsing or playback; ad-free playback is not guaranteed.
 

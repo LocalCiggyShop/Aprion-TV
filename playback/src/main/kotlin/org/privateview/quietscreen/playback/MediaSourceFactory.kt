@@ -1,6 +1,5 @@
 package org.privateview.quietscreen.playback
 
-import android.content.Context
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.C
@@ -12,7 +11,7 @@ import androidx.media3.exoplayer.hls.HlsDataSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import androidx.media3.exoplayer.source.SingleSampleMediaSource
+import androidx.media3.exoplayer.source.AprionCaptionSource
 import org.privateview.quietscreen.core.*
 import org.privateview.quietscreen.extractor.NetworkPolicy
 import org.privateview.quietscreen.extractor.NetworkRole
@@ -40,20 +39,20 @@ class MediaSourceFactory {
             ProgressiveMediaSource.Factory(data).createMediaSource(item(selection.audio.endpoint, selection.audio.mimeType)))
     }
 
-    fun build(selection: PlaybackSelection, caption: CaptionTrack?, durationMs: Long): MediaSource {
+    fun build(selection: PlaybackSelection, captions: List<CaptionTrack>): MediaSource {
         val content = build(selection)
-        if (caption == null) return content
-        NetworkPolicy.validate(caption.endpoint.url, NetworkRole.METADATA)
-        if (!supportedCaption(caption)) throw AppException(ErrorCode.UNSUPPORTED_FORMAT)
-        val subtitle = MediaItem.SubtitleConfiguration.Builder(android.net.Uri.parse(caption.endpoint.url))
-            .setId("quietscreen-caption")
-            .setLanguage(caption.language).setMimeType(caption.format).setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build()
-        // Caption endpoints are metadata hosts, not googlevideo media hosts. Use
-        // the existing bounded metadata client instead of widening the allowlist.
-        val captionData = BoundedDataSource.Factory(OkHttpDataSource.Factory(NetworkPolicy.client(NetworkRole.METADATA)), 1024L * 1024)
-        val text = SingleSampleMediaSource.Factory(captionData).setTreatLoadErrorsAsEndOfStream(true)
-            .createMediaSource(subtitle, if (durationMs > 0) durationMs * 1000 else C.TIME_UNSET)
-        return MergingMediaSource(content, text)
+        if (captions.isEmpty()) return content
+        // Lazy, extraction-time caption tracks load only the selected language.
+        // Parsed cues remain synchronized even when a track changes while paused.
+        val captionData = BoundedDataSource.Factory(
+            OkHttpDataSource.Factory(NetworkPolicy.client(NetworkRole.METADATA)), 1024L * 1024)
+        val textSources = captions.mapIndexed { index, caption ->
+            NetworkPolicy.validate(caption.endpoint.url, NetworkRole.METADATA)
+            if (!supportedCaption(caption)) throw AppException(ErrorCode.UNSUPPORTED_FORMAT)
+            AprionCaptionSource.create(captionData, caption.endpoint.url, caption.format,
+                caption.language, "quietscreen-caption-$index")
+        }
+        return MergingMediaSource(content, *textSources.toTypedArray())
     }
 }
 

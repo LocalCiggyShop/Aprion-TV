@@ -12,16 +12,18 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 class NewPipeDownloader : Downloader() {
     private val client = NetworkPolicy.client(NetworkRole.METADATA)
+    private val suggestionClient = NetworkPolicy.client(NetworkRole.SUGGESTION)
+    @Volatile private var role = NetworkRole.METADATA
     private val calls = CopyOnWriteArrayList<Call>()
     private val headerNames = setOf("accept", "accept-language", "content-type", "origin", "referer", "user-agent", "x-youtube-client-name", "x-youtube-client-version", "x-goog-visitor-id", "x-goog-api-format-version", "x-goog-fieldmask", "x-youtube-bootstrap-logged-in")
     @Volatile private var deadline = Long.MAX_VALUE
     @Volatile private var cancelled = false
-    fun begin() { cancelled = false; deadline = System.nanoTime() + 60_000_000_000L }
+    fun begin(role: NetworkRole = NetworkRole.METADATA) { this.role = role; cancelled = false; deadline = System.nanoTime() + 60_000_000_000L }
     fun cancel() { cancelled = true; calls.forEach { it.cancel() } }
 
     override fun execute(request: Request): Response {
         if (cancelled) throw java.io.InterruptedIOException("Extraction cancelled")
-        val url = NetworkPolicy.validate(request.url(), NetworkRole.METADATA)
+        val url = NetworkPolicy.validate(request.url(), role)
         val builder = okhttp3.Request.Builder().url(url)
         request.headers().forEach { (name, values) ->
             if (name.equals("Cookie", true)) {
@@ -36,7 +38,7 @@ class NewPipeDownloader : Downloader() {
         val data = request.dataToSend()
         if (data != null && data.size > 1024 * 1024) throw PolicyViolation()
         builder.method(request.httpMethod(), data?.toRequestBody("application/json".toMediaTypeOrNull()))
-        val call = client.newCall(builder.build())
+        val call = (if (role == NetworkRole.SUGGESTION) suggestionClient else client).newCall(builder.build())
         call.timeout().deadlineNanoTime(minOf(deadline, System.nanoTime() + 20_000_000_000L))
         calls.add(call)
         if (cancelled) call.cancel()
@@ -45,7 +47,7 @@ class NewPipeDownloader : Downloader() {
                 if (response.code == 429) throw AppException(ErrorCode.RATE_LIMITED)
                 if (response.code == 403) throw AppException(ErrorCode.SIGN_IN_REQUIRED)
                 if (response.code >= 500) throw AppException(ErrorCode.UPSTREAM_CHANGED)
-                val limit = if (url.encodedPath.endsWith(".js")) 4 * 1024 * 1024 else 8 * 1024 * 1024
+                val limit = if (role == NetworkRole.SUGGESTION) 64 * 1024 else if (url.encodedPath.endsWith(".js")) 4 * 1024 * 1024 else 8 * 1024 * 1024
                 val output = ByteArrayOutputStream()
                 response.body.byteStream().use { input ->
                     val buf = ByteArray(8192)

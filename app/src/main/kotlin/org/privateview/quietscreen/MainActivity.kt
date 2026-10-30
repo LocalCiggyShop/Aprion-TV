@@ -58,7 +58,7 @@ class MainActivity : ComponentActivity() {
         updates = UpdateManager.get(this)
         searchModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T = SearchViewModel(catalog) as T
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = SearchViewModel(catalog, NewPipeCatalog()) as T
         })[SearchViewModel::class.java]
         browseModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")

@@ -29,6 +29,9 @@ public final class TrialNativeInstrumentation extends Instrumentation {
     private String resultMethod;
     private String chapterTitle;
     private String chapterStarts;
+    private String captionPhase = "initial";
+    private String captionCueField;
+    private String captionTextField;
     @Override public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
         query = arguments == null ? null : arguments.getString("query");
@@ -40,6 +43,8 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         String chapterTitleBase64 = arguments == null ? null : arguments.getString("chapterTitleBase64");
         chapterTitle = chapterTitleBase64 == null ? null : new String(android.util.Base64.decode(chapterTitleBase64, android.util.Base64.DEFAULT), java.nio.charset.StandardCharsets.UTF_8);
         chapterStarts = arguments == null ? null : arguments.getString("chapterStarts");
+        captionCueField = arguments == null ? null : arguments.getString("captionCueField");
+        captionTextField = arguments == null ? null : arguments.getString("captionTextField");
         start();
     }
     @Override public void onStart() {
@@ -70,7 +75,11 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         // Idle-network checks run with optional update traffic disabled, then restore the preference.
         updatePreferences.edit().putBoolean("automatic", false).commit();
         try {
-            if ("featureSettings".equals(check)) {
+            if ("featureSuggestions".equals(check)) {
+                featureSuggestions(); passed++; result.putString("stream", "\nOK (1 player feature suggestions check)\n");
+            } else if ("featureCaptions".equals(check)) {
+                featureCaptions(); passed++; result.putString("stream", "\nOK (1 player feature captions check)\n");
+            } else if ("featureSettings".equals(check)) {
                 featureSettings(); passed++; result.putString("stream", "\nOK (1 player feature settings check)\n");
             } else if ("featureChapters".equals(check)) {
                 featureChapters(); passed++; result.putString("stream", "\nOK (1 player feature chapters check)\n");
@@ -268,6 +277,142 @@ public final class TrialNativeInstrumentation extends Instrumentation {
     private long pendingSeekSeconds() {
         java.util.regex.Matcher match = java.util.regex.Pattern.compile("Seek position (\\d+) seconds").matcher(texts());
         require(match.find(), "Pending seek timestamp missing"); return Long.parseLong(match.group(1));
+    }
+    private void editSuggestionQuery(String text) {
+        Bundle value = new Bundle(); value.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text);
+        require(searchInput().performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, value), "Suggestion query edit refused");
+    }
+    private String suggestionText(AccessibilityNodeInfo node) {
+        if (node.getContentDescription() != null && node.getContentDescription().toString().startsWith("Search suggestion: "))
+            return node.getContentDescription().toString().substring("Search suggestion: ".length());
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i); if (child == null) continue;
+            String value = suggestionText(child); if (value != null) return value;
+        }
+        return null;
+    }
+    private java.util.List<AccessibilityNodeInfo> suggestionButtons() {
+        java.util.List<AccessibilityNodeInfo> values = new ArrayList<>();
+        for (AccessibilityNodeInfo node : nodes()) if (node.isClickable() && suggestionText(node) != null) values.add(node);
+        return values;
+    }
+    private void awaitSuggestions() {
+        long deadline = SystemClock.elapsedRealtime() + 12000;
+        while (suggestionButtons().isEmpty() && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(200);
+        require(!suggestionButtons().isEmpty() && suggestionButtons().size() <= 6, "Bounded suggestion buttons unavailable");
+    }
+    private void featureSuggestions() throws Exception {
+        launch(); key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_CENTER);
+        waitFor("Title, channel or video ID", 20, false);
+        require(searchInput().performAction(AccessibilityNodeInfo.ACTION_FOCUS), "Suggestion editor focus refused");
+        editSuggestionQuery(""); require(suggestionButtons().isEmpty(), "Empty query retained suggestions");
+        editSuggestionQuery("m"); awaitSuggestions();
+        require(searchInput().isFocused() && searchInput().getText().toString().equals("m"), "Suggestions stole editor focus or changed query");
+        editSuggestionQuery("mu"); editSuggestionQuery("music"); awaitSuggestions();
+        require(searchInput().getText().toString().equals("music") && !texts().contains("Searching…"), "Typing submitted search automatically");
+        runOnMainSync(() -> ((android.view.inputmethod.InputMethodManager) activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE))
+            .hideSoftInputFromWindow(activity.getWindow().getDecorView().getWindowToken(), 0));
+        SystemClock.sleep(300);
+        capturePlayer("/data/local/tmp/aprion-features-suggestions.png");
+        AccessibilityNodeInfo choice = suggestionButtons().get(0);
+        String selected = suggestionText(choice);
+        require(choice.performAction(AccessibilityNodeInfo.ACTION_FOCUS), "Suggestion focus refused");
+        SystemClock.sleep(200); require(focused().contains(selected), "Suggestion focus not verified");
+        require(choice.performAction(AccessibilityNodeInfo.ACTION_CLICK), "Suggestion selection refused");
+        long deadline = SystemClock.elapsedRealtime() + 60000;
+        while (SystemClock.elapsedRealtime() < deadline && !texts().matches("(?s).*\\d+ results.*")) {
+            require(!texts().contains("Try search again"), "Suggested search failed"); SystemClock.sleep(250);
+        }
+        require(texts().matches("(?s).*\\d+ results.*") && searchInput().getText().toString().equals(selected), "Selected suggestion did not submit exact query");
+        require(suggestionButtons().isEmpty(), "Submitted suggestions remained visible");
+        editSuggestionQuery("m"); awaitSuggestions(); editSuggestionQuery(""); SystemClock.sleep(400);
+        require(suggestionButtons().isEmpty(), "Clear did not dismiss pending/cached suggestions");
+        key(KeyEvent.KEYCODE_HOME); SystemClock.sleep(500); launch();
+        require(suggestionButtons().isEmpty(), "Suggestions survived screen exit");
+        marker("FEATURE_SUGGESTIONS singleLetter=true rapidEdits=true boundedSix=true editorFocusRetained=true typingDoesNotSubmit=true selectedExactQuery=true clearDismisses=true screenExit=true");
+    }
+    private android.view.View captionView(android.view.View view) {
+        if (view.getClass().getName().equals("androidx.media3.ui.SubtitleView")) return view;
+        if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                android.view.View match = captionView(group.getChildAt(i)); if (match != null) return match;
+            }
+        }
+        return null;
+    }
+    private String captionText() {
+        final String[] value = { "" }; final Throwable[] failure = { null };
+        runOnMainSync(() -> {
+            try {
+                android.view.View view = captionView(activity.getWindow().getDecorView());
+                require(view != null, "Native subtitle view missing");
+                java.lang.reflect.Field field = view.getClass().getDeclaredField(captionCueField); field.setAccessible(true);
+                for (Object cue : (java.util.List<?>) field.get(view)) {
+                    java.lang.reflect.Field text = cue.getClass().getDeclaredField(captionTextField); text.setAccessible(true);
+                    Object content = text.get(cue); if (content != null) value[0] += content.toString();
+                }
+            } catch (Throwable error) { failure[0] = error; }
+        });
+        if (failure[0] != null) throw new AssertionError("Exact mapping subtitle inspection failed", failure[0]);
+        return value[0];
+    }
+    private String awaitCaption(String differentFrom) {
+        long deadline = SystemClock.elapsedRealtime() + 25000;
+        do {
+            require(!texts().contains("Try playback again") && !texts().contains("Captions couldn't load"), "Caption/playback failure");
+            String value = captionText();
+            if (!value.isEmpty() && !value.equals(differentFrom)) return value;
+            SystemClock.sleep(200);
+        } while (SystemClock.elapsedRealtime() < deadline);
+        throw new AssertionError("Native rendered caption did not arrive/change within bound at " + captionPhase);
+    }
+    private void openCaptions() {
+        focusChannelButton("Captions", true); key(KeyEvent.KEYCODE_DPAD_CENTER); waitFor("Off", 5, false);
+    }
+    private void chooseCaption(String language) {
+        for (int i = 0; i < 34; i++) {
+            String label = focused().trim();
+            if (label.equals(language) || label.equals(language + " ✓")) { key(KeyEvent.KEYCODE_DPAD_CENTER); return; }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT);
+        }
+        throw new AssertionError("Caption language unavailable: " + language);
+    }
+    private void featureCaptions() throws Exception {
+        require(query != null && query.matches("[A-Za-z0-9_-]{11}") && chapterTitle != null &&
+            captionCueField != null && captionTextField != null, "Pinned caption/mapping arguments missing");
+        getTargetContext().getSharedPreferences("playback_preferences", 0).edit().putBoolean("autoplay", false).putBoolean("captions", true).commit();
+        search(query); waitFor(chapterTitle, 60, false); openPinnedResult(chapterTitle, true);
+        waitFor("Playback Playing", 75, true);
+        require(captionText().isEmpty(), "Old saved preference silently enabled captions");
+        openCaptions(); chooseCaption("English");
+        captionPhase = "English-first"; awaitCaption(null); String first = awaitCaption(null); captionPhase = "English-changing"; awaitCaption(first);
+        key(KeyEvent.KEYCODE_MEDIA_PAUSE); waitFor("Playback Paused", 10, true);
+        // Allow the final renderer event to settle before checking paused stability.
+        SystemClock.sleep(300); captionPhase = "paused"; String paused = awaitCaption(null); long position = playbackSeconds();
+        SystemClock.sleep(700); require(paused.equals(captionText()), "Paused captions advanced");
+        capturePlayer("/data/local/tmp/aprion-features-captions.png");
+        key(KeyEvent.KEYCODE_BACK); waitPlayerHidden();
+        capturePlayer("/data/local/tmp/aprion-features-captions-full.png");
+        key(KeyEvent.KEYCODE_DPAD_UP); waitFocused("Captions");
+        openCaptions(); chooseCaption("Arabic"); captionPhase = "Arabic-paused"; String translated = awaitCaption(paused); waitPosition(position);
+        require(!translated.equals(paused) && texts().contains("Playback Paused"), "Language switch lost paused state");
+        openCaptions(); chooseCaption("English"); captionPhase = "English-restored-paused"; awaitCaption(translated); waitPosition(position);
+        openCaptions(); chooseCaption("Off");
+        SystemClock.sleep(300); require(captionText().isEmpty(), "Off did not clear rendered cues"); waitPosition(position);
+        openCaptions(); chooseCaption("English"); captionPhase = "English-reenabled-paused"; awaitCaption(null); waitPosition(position);
+        require(texts().contains("Playback Paused"), "Caption toggle resumed paused video");
+        focusChannelButton(chapterTitle, false); holdSeek(KeyEvent.KEYCODE_DPAD_RIGHT);
+        key(KeyEvent.KEYCODE_DPAD_RIGHT); long target = pendingSeekSeconds(); key(KeyEvent.KEYCODE_DPAD_CENTER);
+        waitPosition(target); captionPhase = "seek-paused"; String sought = awaitCaption(null);
+        require(!sought.equals(paused), "Seek retained stale caption");
+        key(KeyEvent.KEYCODE_MEDIA_PLAY); waitFor("Playback Playing", 10, true); awaitCaption(sought);
+        key(KeyEvent.KEYCODE_MEDIA_PAUSE); waitFor("Playback Paused", 10, true);
+        openCaptions(); capturePlayer("/data/local/tmp/aprion-features-captions-menu.png");
+        chooseCaption("Off"); SystemClock.sleep(300); require(captionText().isEmpty(), "Final Off retained captions");
+        key(KeyEvent.KEYCODE_HOME); SystemClock.sleep(700); launch();
+        require(!texts().contains("Playback Playing") && captionView(activity.getWindow().getDecorView()) == null, "Caption player survived background release");
+        marker("FEATURE_CAPTIONS nativeCues=true languageSwitch=true changingWhilePlaying=true pausedStable=true oldPreferenceIgnored=true offClears=true togglesPreservePosition=true seekResync=true lifecycleReleased=true");
     }
     private void featureChapters() throws Exception {
         require(query != null && query.matches("[A-Za-z0-9_-]{11}") && chapterTitle != null && !chapterTitle.isEmpty() && chapterTitle.length() <= 500,
@@ -1027,6 +1172,8 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             path.equals("/data/local/tmp/aprion-features-settings.png") || path.equals("/data/local/tmp/aprion-features-seek.png") ||
             path.equals("/data/local/tmp/aprion-features-counts.png") || path.equals("/data/local/tmp/aprion-features-autoplay.png") ||
             path.equals("/data/local/tmp/aprion-features-player.png") ||
+            path.equals("/data/local/tmp/aprion-features-captions.png") || path.equals("/data/local/tmp/aprion-features-captions-menu.png") ||
+            path.equals("/data/local/tmp/aprion-features-captions-full.png") || path.equals("/data/local/tmp/aprion-features-suggestions.png") ||
             path.equals("/data/local/tmp/aprion-features-failure.png"), "Unexpected screenshot destination");
         try (android.os.ParcelFileDescriptor.AutoCloseInputStream command = new android.os.ParcelFileDescriptor.AutoCloseInputStream(ui().executeShellCommand("screencap -p " + path))) {
             byte[] buffer = new byte[1024]; int total = 0, read;
@@ -1058,7 +1205,7 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         key(KeyEvent.KEYCODE_DPAD_CENTER); waitFocused("Play video"); waitPosition(before);
         SystemClock.sleep(1100); capturePlayer("/data/local/tmp/quietscreen-player-controls.png");
         key(KeyEvent.KEYCODE_DPAD_RIGHT); if (focused().contains("View channel")) key(KeyEvent.KEYCODE_DPAD_RIGHT); waitFocused("Captions");
-        key(KeyEvent.KEYCODE_DPAD_CENTER); waitFor("Captions aren't available in this version yet.", 10, false);
+        key(KeyEvent.KEYCODE_DPAD_CENTER); waitFor("Off", 10, false);
         key(KeyEvent.KEYCODE_BACK); waitPlayerHidden();
         key(KeyEvent.KEYCODE_DPAD_UP); waitFocused("Captions");
         key(KeyEvent.KEYCODE_DPAD_RIGHT); require(focused().contains("Settings"), "Options Right did not navigate to Settings");

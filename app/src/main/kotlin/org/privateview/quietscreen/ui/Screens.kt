@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -25,6 +26,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -107,6 +110,7 @@ fun SearchScreen(model: SearchViewModel, home: () -> Unit, play: (VideoSummary) 
     val keyboard = LocalSoftwareKeyboardController.current
     val list = rememberLazyListState(model.listIndex, model.listOffset)
     val restoreId = remember { model.focusedVideo }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     var inputFocused by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         val index = state.videos.indexOfFirst { it.id.value == restoreId }
@@ -117,7 +121,12 @@ fun SearchScreen(model: SearchViewModel, home: () -> Unit, play: (VideoSummary) 
         } else { input.requestFocus() }
     }
     DisposableEffect(Unit) {
-        onDispose { model.listIndex = list.firstVisibleItemIndex; model.listOffset = list.firstVisibleItemScrollOffset }
+        onDispose { model.dismissSuggestions(); model.listIndex = list.firstVisibleItemIndex; model.listOffset = list.firstVisibleItemScrollOffset }
+    }
+    DisposableEffect(lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) model.dismissSuggestions() }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
     }
     BackHandler { model.cancel(); keyboard?.hide(); home() }
     Column(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 27.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -141,6 +150,15 @@ fun SearchScreen(model: SearchViewModel, home: () -> Unit, play: (VideoSummary) 
                 decorationBox = { inner -> Box { if (state.query.isEmpty()) Text("Title, channel or video ID", color = Muted, fontSize = 19.sp); inner() } })
             TvAction(if (state.busy) "Search again" else "Search", Modifier.focusRequester(submit)) { keyboard?.hide(); model.search() }
             TvAction("Sort: ${state.sort.label}", Modifier.focusRequester(sortControl)) { keyboard?.hide(); sortMenu = true }
+        }
+        if (state.suggestions.isNotEmpty()) {
+            LazyRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                itemsIndexed(state.suggestions, key = { _, value -> value }) { _, suggestion ->
+                    TvAction(suggestion, Modifier.widthIn(max = 270.dp).semantics { contentDescription = "Search suggestion: $suggestion" }) {
+                        keyboard?.hide(); submit.requestFocus(); model.chooseSuggestion(suggestion)
+                    }
+                }
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(state.message, color = if (state.error == null) Muted else Warning, fontSize = 14.sp, modifier = Modifier.weight(1f))
@@ -210,7 +228,7 @@ fun SettingsScreen(settings: AppSettings, updates: UpdateManager, personalizatio
                     if (index == 0) Modifier.focusRequester(first) else Modifier) { height = value; settings.maxHeight = value }
             }
         }
-        Text("To change a video's language or audio track, open Settings while it plays. Captions aren't available yet.", color = Muted, fontSize = 14.sp)
+        Text("To change a video's language or audio track, open Settings while it plays. Select CC to turn captions on, choose a language or turn them off.", color = Muted, fontSize = 14.sp)
         Text("Autoplay", color = Cloud, fontSize = 19.sp)
         Text("Play the next recommendation after a 15-second countdown when a video ends. You can cancel each countdown.", color = Muted, fontSize = 14.sp)
         TvAction("Autoplay: " + if (autoplay) "On" else "Off") { autoplay = !autoplay; settings.autoplay = autoplay }
@@ -253,7 +271,7 @@ fun AboutScreen(home: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(40.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Heading("About Aprion TV", "Version ${BuildConfig.VERSION_NAME}")
         Text("An independent player for public videos. No account is needed.", color = Cloud, fontSize = 21.sp)
-        Text("Search queries stay in memory. Preferences, bounded topic/channel scores and feedback stay privately on-device, with backups disabled. Continue watching saves 24 unfinished records and 100 completed IDs; Clear browsing session erases them. Reset personalization separately clears interests and feedback. No accounts or telemetry.\n\nBrowsing may send up to two words from learned video topics to YouTube for discovery when personalization is on. Scores and stored viewing/feedback lists are never uploaded. Player suggestions reuse the video's existing response. YouTube/CDNs see ordinary requests and your IP; updates contact GitHub.\n\nRestricted/protected videos and captions are unsupported. Back hides player controls; press Back again to return Home.", color = Muted, fontSize = 15.sp, lineHeight = 22.sp)
+        Text("Search queries and suggestions stay in memory. While typing, partial search text is sent to YouTube to suggest completions. Preferences, bounded topic/channel scores and feedback stay privately on-device, with backups disabled. Continue watching saves 24 unfinished records and 100 completed IDs; Clear browsing session erases them. Reset personalization separately clears interests and feedback. No accounts or telemetry.\n\nBrowsing may send up to two words from learned video topics to YouTube for discovery when personalization is on. Scores and stored viewing/feedback lists are never uploaded. Player suggestions reuse the video's existing response. YouTube/CDNs see ordinary requests and your IP; updates contact GitHub.\n\nRestricted/protected videos are unsupported. Captions depend on availability from the video provider. Back hides player controls; press Back again to return Home.", color = Muted, fontSize = 15.sp, lineHeight = 22.sp)
         Text("Open-source software · GPL-3.0-or-later\nBuilt with AndroidX Media3 and NewPipeExtractor. See the accompanying source and notices.", color = Muted, fontSize = 14.sp)
         Spacer(Modifier.weight(1f))
         TvAction("Back to Home", Modifier.focusRequester(first), onClick = home)

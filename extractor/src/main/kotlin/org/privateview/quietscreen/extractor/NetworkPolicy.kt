@@ -9,7 +9,7 @@ import java.io.IOException
 import java.net.InetAddress
 import java.util.concurrent.TimeUnit
 
-enum class NetworkRole { METADATA, MEDIA, THUMBNAIL }
+enum class NetworkRole { METADATA, MEDIA, THUMBNAIL, SUGGESTION }
 class PolicyViolation : IOException("APRION_TV_NETWORK_POLICY")
 
 object NetworkPolicy {
@@ -20,6 +20,12 @@ object NetworkPolicy {
         val allowed = when (role) {
             NetworkRole.METADATA -> h in setOf("www.youtube.com", "youtube.com", "m.youtube.com", "youtubei.googleapis.com")
             NetworkRole.MEDIA -> h == "googlevideo.com" || h.endsWith(".googlevideo.com")
+            NetworkRole.SUGGESTION -> h == "suggestqueries-clients6.youtube.com" && u.encodedPath == "/complete/search" &&
+                u.queryParameterNames == setOf("client", "ds", "gl", "q", "xhr") &&
+                u.queryParameter("client") == "youtube" && u.queryParameter("ds") == "yt" &&
+                u.queryParameter("gl") == "AU" && u.queryParameter("xhr") == "t" &&
+                u.queryParameter("q")?.length in 1..200 && u.fragment == null &&
+                u.queryParameterNames.all { u.queryParameterValues(it).size == 1 }
             NetworkRole.THUMBNAIL -> h == "ytimg.com" || h.endsWith(".ytimg.com")
         }
         if (!allowed) throw PolicyViolation()
@@ -48,11 +54,12 @@ object NetworkPolicy {
         .dns(Dns { host -> Dns.SYSTEM.lookup(host).also { addresses -> if (addresses.isEmpty() || addresses.any { !isPublic(it) }) throw PolicyViolation() } })
         .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
         .connectTimeout(10, TimeUnit.SECONDS).readTimeout(if (role == NetworkRole.MEDIA) 20 else 15, TimeUnit.SECONDS)
-        .apply { if (role != NetworkRole.MEDIA) callTimeout(20, TimeUnit.SECONDS) }
+        .apply { if (role != NetworkRole.MEDIA) callTimeout(if (role == NetworkRole.SUGGESTION) 3 else 20, TimeUnit.SECONDS) }
         .addInterceptor(Interceptor { chain ->
             var request = chain.request()
             repeat(6) { hop ->
                 validate(request.url.toString(), role)
+                if (role == NetworkRole.SUGGESTION && (request.method != "GET" || request.header("Cookie") != null || request.header("Authorization") != null)) throw PolicyViolation()
                 NetworkAudit.record(role, request.url.host)
                 val response = chain.proceed(request)
                 if (response.code !in setOf(301, 302, 303, 307, 308)) return@Interceptor response
