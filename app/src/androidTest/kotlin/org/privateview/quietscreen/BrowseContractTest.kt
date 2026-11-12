@@ -40,7 +40,11 @@ class BrowseContractTest {
         if (android.os.Build.VERSION.SDK_INT >= 33) automation.clearCache()
         val result = mutableListOf<AccessibilityNodeInfo>()
         fun visit(node: AccessibilityNodeInfo) { if (result.size >= 2000 || !node.refresh()) return; result += node; for (i in 0 until node.childCount) node.getChild(i)?.let(::visit) }
+        // API26 can omit the application from windows even while its active root is valid.
         automation.windows.mapNotNull { it.root }.filter { it.packageName?.toString() == instrument.targetContext.packageName }.forEach(::visit)
+        if (result.isEmpty()) automation.rootInActiveWindow?.takeIf {
+            it.packageName?.toString() == instrument.targetContext.packageName
+        }?.let(::visit)
         return result
     }
     private fun label(node: AccessibilityNodeInfo): String = listOfNotNull(node.text, node.contentDescription).joinToString(" ") +
@@ -135,6 +139,7 @@ class BrowseContractTest {
         try {
             val store = Personalization(instrument.targetContext); store.reset(); store.enabled = true
             store.record(video(900).copy(title = "Bass fishing river techniques"), null, 60_000, 120_000)
+            kotlinx.coroutines.runBlocking { store.flush().join() }
             val reopened = Personalization(instrument.targetContext)
             assertTrue(reopened.interests().topics.getValue("fishing") > 0)
             assertFalse(reopened.profile().personalized)
@@ -152,10 +157,12 @@ class BrowseContractTest {
             store.feedback(related, RecommendationFeedback.BLOCK_CHANNEL)
             onMain { model.arrange(store.profile(), true, interests = store.interests()) }
             await { model.playerRow.value.videos.none { it.id == related.id } }
+            kotlinx.coroutines.runBlocking { store.flush().join() }
             assertFalse(Personalization(instrument.targetContext).interests().permits(related))
             val known = video(903).copy(channel = "Alias fixture", channelId = "UC" + "a".repeat(22))
             store.record(known, null, 60_000, 120_000)
             store.feedback(known, RecommendationFeedback.BLOCK_CHANNEL)
+            kotlinx.coroutines.runBlocking { store.flush().join() }
             val aliases = Personalization(instrument.targetContext).interests()
             assertTrue(aliases.channelAffinity(known.copy(channelId = null)) > 0)
             assertFalse(aliases.permits(known.copy(id = video(904).id, channelId = null)))
@@ -201,13 +208,51 @@ class BrowseContractTest {
             key(KeyEvent.KEYCODE_MENU); await { focused().trim() == "More like this" }
             key(KeyEvent.KEYCODE_DPAD_DOWN); await { focused().trim() == "Not interested" }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await { model.rows.value.first().videos.none { it.id.value == chosen } && focused().trim() == "Cancel" }
+            key(KeyEvent.KEYCODE_BACK)
             await { model.rows.value.first().videos.none { it.id.value == chosen } && focused().contains("Bass fishing") }
             assertEquals(0, opened); assertTrue(chosen in details.dismissed)
             key(KeyEvent.KEYCODE_DPAD_RIGHT); await { model.focus?.videoId != chosen && focused().contains("Bass fishing") }
             key(KeyEvent.KEYCODE_MENU); await { focused().trim() == "More like this" }
             key(KeyEvent.KEYCODE_BACK); await { focused().contains("Bass fishing") }
+        } catch (failure: Throwable) {
+            runCatching { captureHomeFixtureFailure(host, model, failure) }
+            throw failure
         } finally {
             onMain { model.cancel(); host.finish() }; updatePrefs.edit().putBoolean("automatic", automatic).commit()
+        }
+    }
+
+    /** Capture before finally closes the host; post-teardown screenshots cannot diagnose focus. */
+    private fun captureHomeFixtureFailure(host: MainActivity, model: BrowseViewModel, failure: Throwable) {
+        val report = StringBuilder("failure=${failure.javaClass.simpleName}\n")
+        onMain {
+            report.append("lifecycle=${host.lifecycle.currentState} windowFocus=${host.window.decorView.hasWindowFocus()} ")
+            report.append("decorFocus=${host.window.decorView.hasFocus()} viewFocus=${host.currentFocus?.javaClass?.simpleName}\n")
+            report.append("anchor=${model.focus} rows=${model.rows.value.size} ")
+            report.append("recommendedCount=${model.rows.value.first().videos.size} loaded=${model.rows.value.first().loaded}\n")
+        }
+        val automation = instrument.uiAutomation
+        var count = 0
+        fun raw(node: AccessibilityNodeInfo?, depth: Int = 0) {
+            if (node == null || count++ >= 96 || depth >= 20) return
+            // Deliberately retain raw nodes as well as the test's refresh-filtered view.
+            report.append("node depth=$depth focused=${node.isFocused} visible=${node.isVisibleToUser} ")
+            report.append("class=${node.className} text=${node.text?.take(120)} desc=${node.contentDescription?.take(120)}\n")
+            for (index in 0 until minOf(node.childCount, (96 - count).coerceAtLeast(0))) raw(node.getChild(index), depth + 1)
+        }
+        for (window in automation.windows.take(12)) {
+            report.append("window type=${window.type} active=${window.isActive} focused=${window.isFocused}\n")
+            raw(window.root)
+        }
+        report.append("active-root fallback\n"); raw(automation.rootInActiveWindow)
+        val folder = requireNotNull(host.getExternalFilesDir(null))
+        java.io.File(folder, "home-feedback-fixture-failure.txt").writeText(report.toString().take(24_576))
+        automation.takeScreenshot()?.let { bitmap ->
+            java.io.File(folder, "home-feedback-fixture-failure.png").outputStream().use {
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+            }
+            bitmap.recycle()
         }
     }
 

@@ -134,6 +134,12 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             } else if ("playerOverlay".equals(check)) {
                 playerOverlay(); passed++;
                 result.putString("stream", "\nOK (1 player overlay live check)\n");
+            } else if ("remoteSearchSubmit".equals(check)) {
+                remoteSearchSubmit(); passed++;
+                result.putString("stream", "\nOK (1 remote search submission check)\n");
+            } else if ("remoteSearchEdit".equals(check)) {
+                remoteSearchEdit(); passed++;
+                result.putString("stream", "\nOK (1 remote search editing check)\n");
             } else if ("searchCursor".equals(check)) {
                 searchCursor(); passed++;
                 result.putString("stream", "\nOK (1 search cursor check)\n");
@@ -149,6 +155,9 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             }
             result.putInt("passed", passed);
         } catch (Throwable failure) {
+            if ("remoteSearchEdit".equals(check) || "remoteSearchSubmit".equals(check)) try { capturePlayer("/data/local/tmp/aprion-search-edit-failure.png"); }
+            catch (Exception captureFailure) { marker("REMOTE_SEARCH_CAPTURE_FAILED " + captureFailure.getClass().getSimpleName()); }
+            if ("recommendationsV2".equals(check)) try { capturePlayer("/data/local/tmp/aprion-recommendations-v2-failure.png"); } catch (Exception ignored) { }
             if (check != null && check.startsWith("feature")) try { capturePlayer("/data/local/tmp/aprion-features-failure.png"); } catch (Exception ignored) { }
             if ("channelHome".equals(check) || "channelPlayer".equals(check) || "channelReturn".equals(check)) {
                 try { capturePlayer("/data/local/tmp/aprion-channel-failure.png"); } catch (Exception ignored) { }
@@ -1187,7 +1196,11 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             path.equals("/data/local/tmp/quietscreen-settings-explanations.png") || path.equals("/data/local/tmp/aprion-v035-installing.png") ||
             path.equals("/data/local/tmp/aprion-recommendations-v2-player.png") ||
             path.equals("/data/local/tmp/aprion-recommendations-v2-feedback.png") ||
-            path.equals("/data/local/tmp/aprion-recommendations-v2-home.png") ||
+            path.equals("/data/local/tmp/aprion-search-edit-submitted.png") || path.equals("/data/local/tmp/aprion-search-edit-caret.png") ||
+            path.equals("/data/local/tmp/aprion-search-edit-keyboard.png") ||
+            path.equals("/data/local/tmp/aprion-search-edit-return.png") ||
+            path.equals("/data/local/tmp/aprion-search-edit-failure.png") ||
+            path.equals("/data/local/tmp/aprion-recommendations-v2-home.png") || path.equals("/data/local/tmp/aprion-recommendations-v2-failure.png") ||
             path.equals("/data/local/tmp/aprion-v037-search.png") ||
             path.equals("/data/local/tmp/aprion-v037-update-modal.png") ||
             path.equals("/data/local/tmp/aprion-upload-age-search.png") ||
@@ -1290,12 +1303,14 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         capturePlayer("/data/local/tmp/aprion-recommendations-v2-player.png");
         key(KeyEvent.KEYCODE_MENU); waitFocused("More like this");
         capturePlayer("/data/local/tmp/aprion-recommendations-v2-feedback.png");
-        key(KeyEvent.KEYCODE_DPAD_CENTER); SystemClock.sleep(700); waitPosition(before);
+        key(KeyEvent.KEYCODE_DPAD_CENTER); SystemClock.sleep(700); waitFocused("Cancel");
+        key(KeyEvent.KEYCODE_BACK); waitPosition(before);
         org.json.JSONObject learned = new org.json.JSONObject(getTargetContext().getSharedPreferences("recommendation_interests", 0).getString("profile", "{}"));
         require(learned.getJSONObject("topics").length() > 0 && learned.getJSONObject("channels").length() > 0,
             "Minified More like this did not persist local interests");
         key(KeyEvent.KEYCODE_MENU); waitFocused("More like this"); key(KeyEvent.KEYCODE_DPAD_DOWN); waitFocused("Not interested");
-        key(KeyEvent.KEYCODE_DPAD_CENTER); SystemClock.sleep(700); waitPosition(before);
+        key(KeyEvent.KEYCODE_DPAD_CENTER); SystemClock.sleep(700); waitFocused("Cancel");
+        key(KeyEvent.KEYCODE_BACK); waitPosition(before);
         learned = new org.json.JSONObject(getTargetContext().getSharedPreferences("recommendation_interests", 0).getString("profile", "{}"));
         require(learned.getJSONArray("dismissed").length() == 1, "Minified dismissal was not persisted");
         double topicsBeforeExit = scoreTotal(learned.getJSONObject("topics"));
@@ -1310,6 +1325,11 @@ public final class TrialNativeInstrumentation extends Instrumentation {
         deadline = SystemClock.elapsedRealtime() + 60_000;
         while (SystemClock.elapsedRealtime() < deadline && (focused().contains("Home") || focused().contains("Cancel loading") ||
             focused().contains("Try again") || focused().contains("Refresh row"))) SystemClock.sleep(300);
+        SystemClock.sleep(1100);
+        org.json.JSONObject seenProfile = new org.json.JSONObject(getTargetContext().getSharedPreferences("recommendation_interests", 0).getString("profile", "{}"));
+        int seenCount = seenProfile.optJSONArray("shown") == null ? 0 : seenProfile.getJSONArray("shown").length();
+        require(seenCount > 0 && seenCount < 24, "Home impressions must count visible cards, not the whole recommendation row");
+        marker("RECOMMENDATIONS_V3 actualVisibleImpressions=true wholeRowExposure=false");
         key(KeyEvent.KEYCODE_MENU); waitFocused("More like this");
         key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN); waitFocused("Don't recommend this channel");
         key(KeyEvent.KEYCODE_DPAD_CENTER); SystemClock.sleep(700);
@@ -1359,6 +1379,186 @@ public final class TrialNativeInstrumentation extends Instrumentation {
             SystemClock.sleep(250);
         } while (SystemClock.elapsedRealtime() < deadline);
         throw new AssertionError(action + ": focused=" + edit.isFocused() + ", selection=" + edit.getTextSelectionStart() + ":" + edit.getTextSelectionEnd());
+    }
+    private void enterSearchFromHome() {
+        waitFor("Search videos", 20, false);
+        for (AccessibilityNodeInfo node : nodes()) if (node.isClickable() && label(node).trim().equals("Search videos")) {
+            require(node.performAction(AccessibilityNodeInfo.ACTION_FOCUS), "Search rail focus unavailable");
+            key(KeyEvent.KEYCODE_DPAD_CENTER); return;
+        }
+        throw new AssertionError("Search rail unavailable");
+    }
+    private boolean remoteEditImeShown() throws Exception {
+        // Retain only the header, but drain the bounded history: closing early crashes API26's
+        // UiAutomation shell bridge with EPIPE. Newer Android includes a much larger history.
+        android.os.ParcelFileDescriptor descriptor = getUiAutomation().executeShellCommand("dumpsys input_method");
+        java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+        Boolean visible = null;
+        int total = 0;
+        try (java.io.InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor)) {
+            byte[] buffer = new byte[4096]; int count;
+            while ((count = input.read(buffer)) >= 0) {
+                total += count;
+                require(total <= 2097152, "IME diagnostic stream exceeded bound");
+                if (visible == null) {
+                    require(output.size() + count <= 131072, "IME diagnostic header exceeded bound");
+                    output.write(buffer, 0, count);
+                    java.util.regex.Matcher current = java.util.regex.Pattern.compile("mInputShown\\s*=\\s*(true|false)\\b")
+                        .matcher(output.toString("UTF-8"));
+                    if (current.find()) visible = Boolean.parseBoolean(current.group(1));
+                }
+            }
+        }
+        if (visible != null) return visible;
+        String state = output.toString("UTF-8");
+        java.util.regex.Matcher shown = java.util.regex.Pattern.compile("mInputShown\\s*=\\s*(true|false)").matcher(state);
+        if (shown.find()) return Boolean.parseBoolean(shown.group(1));
+        shown = java.util.regex.Pattern.compile("mIsInputViewShown\\s*=\\s*(true|false)").matcher(state);
+        require(shown.find(), "IME visibility format requires driver preflight on this Android version");
+        return Boolean.parseBoolean(shown.group(1));
+    }
+    private void waitRemoteIme(boolean expected) throws Exception {
+        long deadline = SystemClock.elapsedRealtime() + 7000;
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (remoteEditImeShown() == expected) {
+                if (!expected) ui().waitForIdle(500, 4000); // IME hide request precedes its closing animation.
+                return;
+            }
+            SystemClock.sleep(150);
+        }
+        throw new AssertionError("Expected actual keyboard visibility=" + expected);
+    }
+    private void waitRemoteEditor(String expected) {
+        long deadline = SystemClock.elapsedRealtime() + 5000;
+        while (SystemClock.elapsedRealtime() < deadline) {
+            AccessibilityNodeInfo input = searchInput();
+            if (expected.contentEquals(input.getText()) && input.isFocused()) return;
+            SystemClock.sleep(100);
+        }
+        throw new AssertionError("Remote editor did not retain expected text/focus");
+    }
+    private void assertRemoteImeCaret(String expected, int offset) throws Exception {
+        waitRemoteIme(true);
+        assertRemoteInputCaret(expected, offset);
+    }
+    private void assertRemoteEditorCaret(String expected, int offset) {
+        long deadline = SystemClock.elapsedRealtime() + 5000;
+        String actual = "";
+        while (SystemClock.elapsedRealtime() < deadline) {
+            AccessibilityNodeInfo input = searchInput();
+            actual = input.getTextSelectionStart() + ":" + input.getTextSelectionEnd();
+            if (expected.contentEquals(input.getText()) && input.isFocused() &&
+                input.getTextSelectionStart() == offset && input.getTextSelectionEnd() == offset) return;
+            SystemClock.sleep(100);
+        }
+        throw new AssertionError("Remote editor caret mismatch: expected=" + offset + "; actual=" + actual);
+    }
+    private void prepareRemoteCaretInput() throws Exception {
+        final boolean[] touchMode = new boolean[2];
+        runOnMainSync(() -> touchMode[0] = activity.getWindow().getDecorView().isInTouchMode());
+        setInTouchMode(false);
+        waitForIdleSync();
+        runOnMainSync(() -> touchMode[1] = activity.getWindow().getDecorView().isInTouchMode());
+        require(!touchMode[1], "Remote input preflight could not leave touch mode");
+        marker("REMOTE_SEARCH_INPUT_MODE beforeTouch=" + touchMode[0] + " afterTouch=" + touchMode[1]);
+    }
+    private void assertRemoteInputCaret(String expected, int offset) throws Exception {
+        final android.view.inputmethod.ExtractedText[] extracted = new android.view.inputmethod.ExtractedText[1];
+        runOnMainSync(() -> {
+            android.view.View target = activity.getWindow().getDecorView().findFocus();
+            if (target == null) return;
+            android.view.inputmethod.InputConnection connection = target.onCreateInputConnection(new android.view.inputmethod.EditorInfo());
+            if (connection == null) return;
+            try {
+                android.view.inputmethod.ExtractedTextRequest request = new android.view.inputmethod.ExtractedTextRequest();
+                request.hintMaxChars = 200; request.hintMaxLines = 1;
+                extracted[0] = connection.getExtractedText(request, 0);
+            } finally { connection.closeConnection(); }
+        });
+        require(extracted[0] != null && expected.contentEquals(extracted[0].text) &&
+            extracted[0].selectionStart == offset && extracted[0].selectionEnd == offset,
+            "Actual IME insertion point mismatch: expected=" + offset + "; actual=" +
+            (extracted[0] == null ? "unavailable" : extracted[0].selectionStart + ":" + extracted[0].selectionEnd));
+    }
+    private void remoteSearchSubmit() throws Exception {
+        launch(); enterSearchFromHome();
+        if (texts().contains("Sort: Newest first")) {
+            clickSort(); waitFocused("Newest first"); key(KeyEvent.KEYCODE_DPAD_DOWN); waitFocused("Relevance");
+            key(KeyEvent.KEYCODE_DPAD_CENTER); waitFor("Sort: Relevance", 10, false);
+        }
+        Bundle value = new Bundle();
+        value.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "dQw4w9WgXcQ");
+        require(searchInput().performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, value), "Submission fixture entry refused");
+        require(searchInput().performAction(AccessibilityNodeInfo.ACTION_FOCUS), "Submission editor focus unavailable");
+        if (!remoteEditImeShown()) key(KeyEvent.KEYCODE_DPAD_CENTER);
+        waitRemoteIme(true);
+        final android.view.inputmethod.InputConnection[] connection = new android.view.inputmethod.InputConnection[1];
+        final boolean[] sent = new boolean[1];
+        try {
+            // Exercise the platform IME action, independently of the app's Search button.
+            runOnMainSync(() -> {
+                android.view.View target = activity.getWindow().getDecorView().findFocus();
+                android.view.inputmethod.EditorInfo info = new android.view.inputmethod.EditorInfo();
+                if (target == null) return;
+                connection[0] = target.onCreateInputConnection(info);
+                if (connection[0] != null && (info.imeOptions & android.view.inputmethod.EditorInfo.IME_MASK_ACTION) == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH)
+                    sent[0] = connection[0].performEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
+            });
+            require(sent[0], "Native IME search action unavailable or refused");
+            waitRemoteIme(false);
+            marker("REMOTE_SEARCH_SUBMIT_STAGE actualImeAction=true keyboardDismissed=true relevanceSortPinned=true");
+            waitFor("Never Gonna Give You Up", 75, false);
+            require(texts().contains("results"), "IME submission did not produce search results");
+            capturePlayer("/data/local/tmp/aprion-search-edit-submitted.png");
+            marker("REMOTE_SEARCH_SUBMIT actualImeAction=true keyboardDismissed=true pinnedResultPresent=true playbackNotStarted=true");
+        } finally {
+            if (connection[0] != null) runOnMainSync(() -> connection[0].closeConnection());
+        }
+    }
+    private void remoteSearchEdit() throws Exception {
+        launch(); enterSearchFromHome();
+        // Seed explicitly: retained editor state and result ordering must never be assumed.
+        String original = "alpha beta";
+        Bundle value = new Bundle(); value.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, original);
+        require(searchInput().performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, value), "Fixture query entry refused");
+        waitFor(original, 10, false); waitRemoteIme(true);
+        assertRemoteImeCaret(original, original.length());
+        marker("REMOTE_SEARCH_EDIT_STAGE initialKeyboardShown=true");
+        key(KeyEvent.KEYCODE_BACK); waitRemoteIme(false); waitFor("Move cursor", 10, false);
+        // Keep the confirmed editor focus: TV focus-navigation Left can itself move the caret.
+        waitRemoteEditor(original); waitRemoteIme(false);
+        prepareRemoteCaretInput();
+        assertRemoteEditorCaret(original, original.length());
+        for (int i = 0; i < 4; i++) {
+            key(KeyEvent.KEYCODE_DPAD_LEFT); assertRemoteEditorCaret(original, original.length() - i - 1);
+        }
+        waitRemoteEditor(original); waitRemoteIme(false);
+        key(KeyEvent.KEYCODE_DPAD_RIGHT); waitRemoteEditor(original); assertRemoteEditorCaret(original, 7);
+        key(KeyEvent.KEYCODE_DPAD_LEFT); waitRemoteEditor(original); assertRemoteEditorCaret(original, 6);
+        capturePlayer("/data/local/tmp/aprion-search-edit-caret.png");
+        marker("REMOTE_SEARCH_EDIT_STAGE caretBeforeKeyboard=true leftRight=true queryRetained=true");
+        key(KeyEvent.KEYCODE_DPAD_CENTER); waitRemoteIme(true);
+        assertRemoteImeCaret(original, 6);
+        capturePlayer("/data/local/tmp/aprion-search-edit-keyboard.png");
+        key(KeyEvent.KEYCODE_X);
+        assertRemoteImeCaret("alpha xbeta", 7);
+        key(KeyEvent.KEYCODE_BACK); waitRemoteIme(false); waitFor("Move cursor", 10, false);
+        waitRemoteEditor("alpha xbeta");
+        prepareRemoteCaretInput();
+        key(KeyEvent.KEYCODE_DPAD_LEFT); assertRemoteEditorCaret("alpha xbeta", 6);
+        key(KeyEvent.KEYCODE_DPAD_RIGHT); assertRemoteEditorCaret("alpha xbeta", 7);
+        key(KeyEvent.KEYCODE_BACK); waitFocused("Search");
+        require(texts().contains("Find a video by title, channel or video ID."), "Editing unexpectedly submitted a video search");
+        key(KeyEvent.KEYCODE_BACK); waitFor("Search videos", 10, false);
+        enterSearchFromHome(); assertRemoteEditorCaret("alpha xbeta", 7); waitRemoteIme(false);
+        capturePlayer("/data/local/tmp/aprion-search-edit-return.png");
+        // Verify the retained position through the real platform input connection as well
+        // as native accessibility, then require typing at exactly that position.
+        key(KeyEvent.KEYCODE_DPAD_CENTER); assertRemoteImeCaret("alpha xbeta", 7);
+        key(KeyEvent.KEYCODE_Y); assertRemoteImeCaret("alpha xybeta", 8);
+        key(KeyEvent.KEYCODE_BACK); waitRemoteIme(false); waitFor("Move cursor", 10, false);
+        waitRemoteEditor("alpha xybeta");
+        marker("REMOTE_SEARCH_EDIT insertionAtSelectedCaret=true imeOpenedExplicitly=true backToCaret=true backToControls=true returnSelectionRetained=true automaticVideoSearch=false");
     }
     private void searchCursor() {
         launch(); key(KeyEvent.KEYCODE_DPAD_CENTER);

@@ -12,9 +12,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
@@ -28,9 +25,7 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -111,7 +106,6 @@ fun SearchScreen(model: SearchViewModel, home: () -> Unit, play: (VideoSummary) 
     val list = rememberLazyListState(model.listIndex, model.listOffset)
     val restoreId = remember { model.focusedVideo }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    var inputFocused by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         val index = state.videos.indexOfFirst { it.id.value == restoreId }
         if (index >= 0) {
@@ -135,19 +129,9 @@ fun SearchScreen(model: SearchViewModel, home: () -> Unit, play: (VideoSummary) 
             TvAction("Home") { keyboard?.hide(); home() }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            BasicTextField(state.query, model::setQuery,
-                modifier = Modifier.weight(1f).focusRequester(input).onFocusChanged { inputFocused = it.isFocused }
-                    .onPreviewKeyEvent { event ->
-                        if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                            keyboard?.hide(); submit.requestFocus(); true
-                        } else false
-                    }
-                    .background(RaisedPanel, RoundedCornerShape(10.dp))
-                    .border(if (inputFocused) 2.dp else 1.dp, if (inputFocused) Accent else RaisedPanel, RoundedCornerShape(10.dp)).padding(14.dp),
-                singleLine = true, textStyle = TextStyle(color = Cloud, fontSize = 19.sp),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { keyboard?.hide(); model.search() }),
-                decorationBox = { inner -> Box { if (state.query.isEmpty()) Text("Title, channel or video ID", color = Muted, fontSize = 19.sp); inner() } })
+            RemoteSearchField(state.query, model.queryCursor, model::setQuery,
+                onCursorChange = { model.queryCursor = it }, onRetainEditor = model::retainEditor, onSearch = { model.search() },
+                leaveEditor = { submit.requestFocus() }, modifier = Modifier.weight(1f).focusRequester(input))
             TvAction(if (state.busy) "Search again" else "Search", Modifier.focusRequester(submit)) { keyboard?.hide(); model.search() }
             TvAction("Sort: ${state.sort.label}", Modifier.focusRequester(sortControl)) { keyboard?.hide(); sortMenu = true }
         }
@@ -242,7 +226,7 @@ fun SettingsScreen(settings: AppSettings, updates: UpdateManager, personalizatio
         }
         Text(message, color = Accent, fontSize = 14.sp)
         Text("Recommended for you", color = Cloud, fontSize = 19.sp)
-        Text("Recommended learns your favourite topics, channels and genres from what you watch. Home mixes those interests with discoveries; player suggestions relate to the current video.", color = Muted, fontSize = 14.sp)
+        Text("Recommended learns your favourite topics, channels and genres from meaningful viewing. Only recommendations you see count as viewed; leaving early does not mean dislike. Home includes discoveries; player suggestions relate to the current video.", color = Muted, fontSize = 14.sp)
         Text("Search videos count too, even without a recognised genre. Learning usually starts after 30 seconds, or 10 seconds and 80% of a short video. Hold OK or press Menu on a card for More like this, Not interested or Don't recommend this channel.", color = Muted, fontSize = 14.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             TvAction("Personalization: " + if (personalized) "On" else "Off") {

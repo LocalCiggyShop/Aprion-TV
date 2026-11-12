@@ -10,6 +10,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.font.FontWeight
@@ -23,6 +25,9 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.Text
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import org.privateview.quietscreen.core.*
@@ -83,13 +88,14 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
     }
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            try { kotlinx.coroutines.awaitCancellation() } finally { model.cancel() }
+            model.enterHome()
+            try { kotlinx.coroutines.awaitCancellation() } finally { model.leaveHome(); model.cancel() }
         }
     }
     DisposableEffect(Unit) {
         onDispose {
             model.vertical = ScrollPosition(column.firstVisibleItemIndex, column.firstVisibleItemScrollOffset)
-            model.exposed()
+            model.leaveHome()
             model.cancel()
         }
     }
@@ -144,7 +150,9 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
                         } else if (direction < 0) {
                             if (rows.any { it.busy }) cancelFocus.requestFocus() else rail.requestFocus()
                         }
-                    }, feedback = { video, press -> cancelNavigation(); feedbackPress = press; feedbackVideo = video }, play = play)
+                    }, impressionsEnabled = feedbackVideo == null,
+                        feedback = { video, press -> cancelNavigation(); feedbackPress = press; feedbackVideo = video },
+                        play = play)
                 }
             }
             Text("← → Browse    ↑ ↓ Change row    OK Play    Hold OK / Menu Options    Back Return", color = Muted, fontSize = 11.sp,
@@ -166,7 +174,7 @@ fun BrowseScreen(model: BrowseViewModel, initialFocus: String, search: () -> Uni
 private fun BrowseShelf(row: BrowseRow, model: BrowseViewModel,
     focusers: MutableMap<String, suspend (BrowseFocus) -> Boolean>, rail: FocusRequester,
     navigate: (BrowseFocus) -> Unit, onVertical: (Int, Int) -> Unit, feedback: (VideoSummary, RecommendationMenuPress) -> Unit,
-    play: (VideoSummary, Genre?) -> Unit) {
+    impressionsEnabled: Boolean, play: (VideoSummary, Genre?) -> Unit) {
     val saved = model.horizontal[row.key] ?: ScrollPosition()
     val list = rememberLazyListState(saved.index, saved.offset)
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
@@ -176,6 +184,30 @@ private fun BrowseShelf(row: BrowseRow, model: BrowseViewModel,
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { model.loadRow(row.key) }
     }
     val currentRow by rememberUpdatedState(row)
+    var verticallyVisible by remember { mutableStateOf(false) }
+    val allowImpressions by rememberUpdatedState(impressionsEnabled)
+    LaunchedEffect(row.key, lifecycle) {
+        if (row.recommended) lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            try {
+                snapshotFlow {
+                    if (!verticallyVisible || !allowImpressions) emptySet<String>() else {
+                        val info = list.layoutInfo
+                        info.visibleItemsInfo.filter { item ->
+                            val visible = minOf(item.offset + item.size, info.viewportEndOffset) - maxOf(item.offset, info.viewportStartOffset)
+                            item.size > 0 && visible * 2 >= item.size
+                        }.mapNotNull { item -> currentRow.videos.getOrNull(item.index)?.id?.value }.toSet()
+                    }
+                }.distinctUntilChanged().collectLatest { visible ->
+                    model.exposeVisible(visible, android.os.SystemClock.elapsedRealtime())
+                    if (visible.isNotEmpty()) {
+                        delay(750)
+                        model.exposeVisible(visible, android.os.SystemClock.elapsedRealtime())
+                    }
+                }
+            } finally { model.exposeVisible(emptySet(), android.os.SystemClock.elapsedRealtime()) }
+        }
+    }
+
     var pendingCard by remember { mutableStateOf(false) }
     var desiredColumn by remember { mutableIntStateOf(0) }
     DisposableEffect(row.key) {
@@ -228,7 +260,9 @@ private fun BrowseShelf(row: BrowseRow, model: BrowseViewModel,
             Text(row.label, color = Cloud, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Text(row.hint, color = Muted, fontSize = 12.sp)
         }
-        LazyRow(state = list, modifier = Modifier.fillMaxWidth().focusGroup(),
+        LazyRow(state = list, modifier = Modifier.fillMaxWidth().focusGroup().onGloballyPositioned { coordinates ->
+            verticallyVisible = coordinates.size.height > 0 && coordinates.boundsInWindow().height * 2 >= coordinates.size.height
+        },
             horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(4.dp)) {
             itemsIndexed(row.videos, key = { _, video -> video.id.value }) { index, video ->
                 val focus = remember(video.id) { FocusRequester() }
@@ -253,6 +287,7 @@ private fun BrowseShelf(row: BrowseRow, model: BrowseViewModel,
                 }, resumeMs = row.resumes[video.id.value]) {
                     model.focus = BrowseFocus(row.genre, video.id.value, column = index, rowKey = row.key)
                     model.horizontal[row.key] = ScrollPosition(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset)
+                    if (row.recommended) model.selected(video)
                     play(video, row.genre ?: row.origins[video.id.value])
                 }
             }

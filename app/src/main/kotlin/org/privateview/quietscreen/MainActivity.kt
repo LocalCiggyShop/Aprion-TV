@@ -34,6 +34,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var personalization: Personalization
     private lateinit var continuing: ContinueWatching
     private var startPositionMs = 0L
+    private var autoplayStarted = false
     private lateinit var settings: AppSettings
     private var screen by mutableStateOf(Screen.HOME)
     private var selected by mutableStateOf<VideoSummary?>(null)
@@ -53,7 +54,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = AppSettings(this)
-        personalization = Personalization(this)
+        personalization = Personalization.get(this)
         continuing = ContinueWatching(this)
         updates = UpdateManager.get(this)
         searchModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
@@ -94,14 +95,14 @@ class MainActivity : ComponentActivity() {
                                 homeFocus = "home"; browseModel.cancel()
                                 selectedGenre = genre ?: continuing.genre(video.id) ?: GenreClassifier.classify(video)
                                 startPositionMs = if (browseModel.focus?.rowKey == "continue") continuing.position(video.id) else 0
-                                playerReturnsToChannel = false; selected = video; screen = Screen.PLAYER
+                                autoplayStarted = false; playerReturnsToChannel = false; selected = video; screen = Screen.PLAYER
                             })
                         Screen.SEARCH -> SearchScreen(searchModel, home = {
                             searchModel.cancel(); refreshRecommendations()
                             browseModel.continueWatching(continuing.videos()); screen = Screen.HOME
                         }) {
                             searchModel.cancel(); selectedGenre = GenreClassifier.classify(it); startPositionMs = 0
-                            playerReturnsToChannel = false; selected = it; screen = Screen.PLAYER
+                            autoplayStarted = false; playerReturnsToChannel = false; selected = it; screen = Screen.PLAYER
                         }
                         Screen.SETTINGS -> SettingsScreen(settings, updates, personalization,
                             clearSession = { searchModel.clear(); channelModel.clear(); continuing.clear(); browseModel.clear(); ThumbnailLoader.clear() },
@@ -111,14 +112,15 @@ class MainActivity : ComponentActivity() {
                             channelModel.cancel(); refreshRecommendations(); browseModel.continueWatching(continuing.videos()); screen = Screen.HOME
                         }) { video ->
                             channelModel.cancel(); selectedGenre = GenreClassifier.classify(video); startPositionMs = 0
-                            playerReturnsToChannel = true; selected = video; screen = Screen.PLAYER
+                            autoplayStarted = false; playerReturnsToChannel = true; selected = video; screen = Screen.PLAYER
                         }
                         Screen.PLAYER -> selected?.let { video ->
                             val genre = selectedGenre
                             key(video.id.value) {
                             PlayerScreen(video, catalog, settings,
-                                watched = { time, duration, detected ->
-                                    personalization.record(video, detected ?: genre, time, duration)
+                                autoplayStarted = autoplayStarted,
+                                outcome = { result, detected ->
+                                    personalization.record(video, detected ?: genre, result)
                                     refreshRecommendations()
                                 }, startPositionMs = startPositionMs,
                                 progress = { position, duration, ended, detected ->
@@ -126,9 +128,12 @@ class MainActivity : ComponentActivity() {
                                     browseModel.continueWatching(continuing.videos())
                                 }, recommendations = browseModel, feedback = ::recommendationFeedback,
                                 metadata = { updated -> if (selected?.id == updated.id) selected = updated }, openChannel = ::openChannel,
-                                playNext = { next, nextGenre ->
+                                autoNext = { next, nextGenre ->
                                     browseModel.cancel(); selectedGenre = nextGenre ?: GenreClassifier.classify(next)
-                                    startPositionMs = 0; selected = next
+                                    startPositionMs = 0; autoplayStarted = true; selected = next
+                                }, playNext = { next, nextGenre ->
+                                    browseModel.cancel(); selectedGenre = nextGenre ?: GenreClassifier.classify(next)
+                                    startPositionMs = 0; autoplayStarted = false; selected = next
                                 }) {
                                 selected = null; screen = if (playerReturnsToChannel) Screen.CHANNEL else Screen.HOME
                             }
@@ -142,6 +147,11 @@ class MainActivity : ComponentActivity() {
             }
             }
         }
+    }
+
+    override fun onDestroy() {
+        if (::personalization.isInitialized) personalization.flush()
+        super.onDestroy()
     }
 
     override fun onResume() {
@@ -159,6 +169,7 @@ class MainActivity : ComponentActivity() {
         if (::channelModel.isInitialized) channelModel.cancel()
         ThumbnailLoader.cancelPending()
         catalog.cancelPending()
+        if (::personalization.isInitialized) personalization.flush()
         super.onStop()
     }
 }

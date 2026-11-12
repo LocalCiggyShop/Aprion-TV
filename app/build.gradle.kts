@@ -17,8 +17,8 @@ android {
         applicationId = "org.privateview.apriontv"
         minSdk = 26
         targetSdk = 36
-        versionCode = 17
-        versionName = "0.3.13-beta"
+        versionCode = 18
+        versionName = "0.3.14-beta"
         buildConfigField("String", "UPDATE_OWNER", "\"$updateOwner\"")
         buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
         buildConfigField("String", "UPDATE_BRANCH", "\"$updateBranch\"")

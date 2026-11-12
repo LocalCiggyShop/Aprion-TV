@@ -58,6 +58,7 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
     openChannel: ((VideoSummary) -> Unit)? = null,
     captionChoices: () -> List<Pair<String, () -> Unit>> = { emptyList() },
     updateCaptionLayout: (Boolean, Boolean) -> Unit = { _, _ -> },
+    autoNext: ((VideoSummary, Genre?) -> Unit)? = null,
     preview: PreviewStoryboard? = null, autoplayEnabled: Boolean = false, chapters: List<VideoChapter> = emptyList(),
     beginSeek: () -> SeekSession? = { if (info.canSeek && info.duration > 0) SeekSession(info.position.coerceIn(0, info.duration), info.position.coerceIn(0, info.duration), info.duration, info.playing).also { setPlaying(false) } else null },
     finishSeek: (SeekSession, Boolean) -> Unit = { session, commit -> if (commit) seek(session.pendingMs - info.position); setPlaying(session.resume) }) {
@@ -106,7 +107,7 @@ internal fun PlayerOverlay(info: PlayerOverlayInfo, row: BrowseRow,
     val currentArea by rememberUpdatedState(area)
     val currentCards by rememberUpdatedState(rawCards)
     val currentRow by rememberUpdatedState(row)
-    val currentPlayNext by rememberUpdatedState(playNext)
+    val currentPlayNext by rememberUpdatedState(autoNext ?: playNext)
     fun cancelAutoplay() { if (latestInfo.ended) { autoplay.cancel(); countdown = null; autoplayCancelled = true } }
     fun freezeShelf() { pinnedCards = rawCards; pinnedOrigins = row.origins.filterKeys { key -> rawCards.any { it.id.value == key } } }
     fun focusShelf(index: Int) {

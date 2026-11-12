@@ -27,7 +27,11 @@ object InterestMetadata {
 
 class InterestProfile(topics: Map<String, Double> = emptyMap(), channels: Map<String, Double> = emptyMap(),
     dismissed: List<String> = emptyList(), blocked: List<String> = emptyList(), shown: List<String> = emptyList(),
-    channelNames: Map<String, String> = emptyMap(), blockedNames: Map<String, String> = emptyMap()) {
+    channelNames: Map<String, String> = emptyMap(), blockedNames: Map<String, String> = emptyMap(),
+    pairs: Map<String, Double> = emptyMap()) {
+    val pairs = sanitize(pairs, 16) { pair ->
+        val terms = pair.split(' '); terms.size == 2 && terms.distinct().size == 2 && terms.all(InterestMetadata::validTopic)
+    }
     val topics = sanitize(topics, MAX_TOPICS, InterestMetadata::validTopic)
     val channels = sanitize(channels, MAX_CHANNELS, InterestMetadata::validChannel)
     val dismissed = ids(dismissed, MAX_DISMISSED)
@@ -52,12 +56,11 @@ class InterestProfile(topics: Map<String, Double> = emptyMap(), channels: Map<St
         return maxOf(primary, channels[name] ?: 0.0,
             if (InterestMetadata.stableChannel(video) == null) fallbackScores[name] ?: 0.0 else 0.0)
     }
-    fun watched(video: VideoSummary, watchedMs: Long, durationMs: Long): InterestProfile {
-        val watched = watchedMs.coerceIn(0, 3_600_000)
-        val fraction = if (durationMs > 0) (watched.toDouble() / durationMs).coerceIn(0.0, 1.0) else 0.0
-        if (watched in 10_000 until 30_000 && durationMs >= 120_000 && fraction < .1) return adjust(video, -1.0)
-        if (watched < 30_000 && !(watched >= 10_000 && fraction >= .8)) return this
-        return adjust(video, kotlin.math.sqrt((watched / 60_000.0).coerceAtMost(10.0)) + fraction * 2)
+    fun watched(video: VideoSummary, watchedMs: Long, durationMs: Long): InterestProfile =
+        watched(video, WatchOutcome(watchedMs, durationMs))
+    fun watched(video: VideoSummary, outcome: WatchOutcome, weight: Double = 1.0): InterestProfile {
+        val gain = outcome.gain * weight.coerceIn(0.0, 1.0)
+        return if (gain > 0) adjust(video, gain) else this
     }
     private fun adjust(video: VideoSummary, gain: Double): InterestProfile {
         val nextTopics = topics.mapValues { (_, score) -> score * .98 }.toMutableMap()
@@ -67,7 +70,14 @@ class InterestProfile(topics: Map<String, Double> = emptyMap(), channels: Map<St
         if (channel.isNotBlank()) nextChannels[channel] = (nextChannels[channel] ?: 0.0) + gain * 2
         val nextNames = channelNames.toMutableMap()
         InterestMetadata.stableChannel(video)?.let { nextNames[it] = InterestMetadata.channelName(video) }
-        return InterestProfile(nextTopics, nextChannels, dismissed, blocked, shown, nextNames, blockedNames)
+        val nextPairs = pairs.mapValues { (_, score) -> score * .98 }.toMutableMap()
+        val terms = InterestMetadata.topics(video.title).toList()
+        // Adjacent retained title terms provide bounded co-occurrence evidence, never global combinations.
+        terms.zipWithNext().forEach { (a, b) ->
+            val pair = listOf(a, b).sorted().joinToString(" ")
+            nextPairs[pair] = (nextPairs[pair] ?: 0.0) + gain
+        }
+        return InterestProfile(nextTopics, nextChannels, dismissed, blocked, shown, nextNames, blockedNames, nextPairs)
     }
     fun feedback(video: VideoSummary, feedback: RecommendationFeedback): InterestProfile = when (feedback) {
         RecommendationFeedback.MORE -> adjust(video, 6.0).let {
@@ -75,23 +85,28 @@ class InterestProfile(topics: Map<String, Double> = emptyMap(), channels: Map<St
             val kept = blocked.filterNot { key -> key == primary || key == name ||
                 (InterestMetadata.stableChannel(video) == null && blockedNames[key] == name) }
             InterestProfile(it.topics, it.channels, dismissed.filterNot { id -> id == video.id.value },
-                kept, shown, it.channelNames, blockedNames)
+                kept, shown, it.channelNames, blockedNames, it.pairs)
         }
         RecommendationFeedback.LESS -> adjust(video, -2.0).let {
-            InterestProfile(it.topics, it.channels, listOf(video.id.value) + dismissed, blocked, shown, it.channelNames, blockedNames)
+            InterestProfile(it.topics, it.channels, listOf(video.id.value) + dismissed, blocked, shown, it.channelNames, blockedNames, it.pairs)
         }
         RecommendationFeedback.BLOCK_CHANNEL -> {
             val aliases = blockedNames.toMutableMap()
             InterestMetadata.stableChannel(video)?.let { aliases[it] = InterestMetadata.channelName(video) }
             InterestProfile(topics, channels, listOf(video.id.value) + dismissed,
-                listOf(InterestMetadata.channel(video)) + blocked, shown, channelNames, aliases)
+                listOf(InterestMetadata.channel(video)) + blocked, shown, channelNames, aliases, pairs)
         }
     }
     fun exposed(videos: List<VideoSummary>) = InterestProfile(topics, channels, dismissed, blocked,
-        videos.take(24).map { it.id.value } + shown, channelNames, blockedNames)
+        videos.take(24).map { it.id.value } + shown, channelNames, blockedNames, pairs)
     /** At most two public topic words are sent, only while personalization is on. */
-    fun discoveryQuery(): String? = topics.entries.sortedByDescending { it.value }.take(2)
-        .map { it.key }.joinToString(" ").takeIf { it.isNotBlank() }
+    fun discoveryQuery(rotation: Int = 0): String? {
+        val strongest = topics.entries.sortedByDescending { it.value }.take(3)
+        if (strongest.isEmpty()) return null
+        val seed = strongest[Math.floorMod(rotation, strongest.size)].key
+        return pairs.entries.filter { (pair, _) -> pair.split(' ').all { it in topics } && seed in pair.split(' ') }
+            .maxByOrNull { it.value }?.key ?: seed
+    }
     companion object {
         private val videoId = Regex("[A-Za-z0-9_-]{11}")
         const val MAX_TOPICS = 64
@@ -110,28 +125,12 @@ class InterestProfile(topics: Map<String, Double> = emptyMap(), channels: Map<St
     }
 }
 
-/** Metadata is parsed once per candidate; never run this from a playback sampling loop. */
+/** Standalone adapter; the coordinator shares a prepared pool for both presentation contexts. */
 object InterestRanking {
     fun rank(videos: List<VideoSummary>, interests: InterestProfile, enabled: Boolean,
         context: VideoSummary? = null, rotation: Int = 0): List<VideoSummary> {
-        val contextTopics = context?.let { InterestMetadata.topics(it.title) }.orEmpty()
-        val contextChannel = context?.let(InterestMetadata::channel)
-        val contextName = context?.let(InterestMetadata::channelName)
-        val seen = interests.shown.toSet()
-        return videos.take(60).filter { interests.permits(it) && it.id != context?.id && !it.live }
-            .mapIndexed { index, video ->
-                val topics = InterestMetadata.topics(video.title)
-                val channel = InterestMetadata.channel(video)
-                val affinity = if (enabled) topics.sumOf { kotlin.math.sqrt(interests.topics[it] ?: 0.0) }.coerceAtMost(16.0) +
-                    kotlin.math.sqrt(interests.channelAffinity(video)) * 2 else 0.0
-                val relevance = if (context == null) 0.0 else topics.count { it in contextTopics } * 5.0 +
-                    if (channel.isNotBlank() && (channel == contextChannel ||
-                        (contextName == InterestMetadata.channelName(video) &&
-                            (InterestMetadata.stableChannel(context) == null || InterestMetadata.stableChannel(video) == null)))) 8.0 else 0.0
-                val novelty = if (video.id.value in seen) -12.0 else 0.0
-                // Stable bounded rotation breaks provider-order ties without a random generator.
-                Triple(video, affinity + relevance + novelty, Math.floorMod(index - rotation, videos.size.coerceAtLeast(1)))
-            }.sortedWith(compareByDescending<Triple<VideoSummary, Double, Int>> { it.second }.thenBy { it.third })
-            .map { it.first }
+        return RecommendedVideos.select(GenrePreferences(), enabled,
+            RecommendationPool(mapOf(Genre.SCIENCE to videos.take(60))), emptySet(), limit = 60,
+            interests = interests, context = context, rotation = rotation).map { it.video }
     }
 }

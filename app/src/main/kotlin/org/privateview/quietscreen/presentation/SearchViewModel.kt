@@ -19,17 +19,27 @@ class SearchViewModel(private val catalog: VideoCatalog, suggestions: SearchSugg
     private var generation = 0
     private var lastQuery = ""
     var focusedVideo: String? = null
+    var queryCursor = Int.MAX_VALUE
     var listIndex = 0
     var listOffset = 0
     fun setQuery(value: String) {
-        val query = value.take(200)
+        val query = SearchCaret.limit(value)
         if (query == mutable.value.query) return
+        queryCursor = SearchCaret.clamp(query, queryCursor)
         mutable.value = mutable.value.copy(query = query)
         completions?.update(query)
+    }
+    /** Retain the last UI edit on screen disposal without starting a suggestion request. */
+    fun retainEditor(value: String, cursor: Int) {
+        val query = SearchCaret.limit(value)
+        queryCursor = SearchCaret.clamp(query, cursor)
+        mutable.value = mutable.value.copy(query = query)
+        dismissSuggestions()
     }
     fun dismissSuggestions() { completions?.dismiss() }
     fun chooseSuggestion(value: String) {
         if (value !in mutable.value.suggestions) return
+        queryCursor = value.length
         mutable.value = mutable.value.copy(query = value)
         search()
     }
@@ -69,6 +79,6 @@ class SearchViewModel(private val catalog: VideoCatalog, suggestions: SearchSugg
         }
     }
     fun cancel() { dismissSuggestions(); generation++; job?.cancel(); catalog.cancelPending(); mutable.value = mutable.value.copy(busy = false, message = if (mutable.value.busy) "Search cancelled." else mutable.value.message) }
-    fun clear() { cancel(); completions?.clear(); lastQuery = ""; focusedVideo = null; listIndex = 0; listOffset = 0; mutable.value = SearchState() }
+    fun clear() { cancel(); completions?.clear(); lastQuery = ""; focusedVideo = null; queryCursor = Int.MAX_VALUE; listIndex = 0; listOffset = 0; mutable.value = SearchState() }
     override fun onCleared() { cancel() }
 }

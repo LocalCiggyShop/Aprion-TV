@@ -27,7 +27,7 @@ Built for **Android TV and Google TV running Android 8.0 or later**.
 2. Open Downloader, enter the APK link below and select **Go**:
 
    ```text
-   https://github.com/LocalCiggyShop/Aprion-TV/releases/download/v0.3.13-beta/Aprion-TV.apk
+   https://github.com/LocalCiggyShop/Aprion-TV/releases/download/v0.3.14-beta/Aprion-TV.apk
    ```
 
 3. If your TV asks, allow **Downloader** to install apps from this source. Return to Downloader and select **Install**, then **Open**.

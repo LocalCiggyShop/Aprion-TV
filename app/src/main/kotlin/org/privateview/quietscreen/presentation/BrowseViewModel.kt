@@ -3,6 +3,7 @@ package org.privateview.quietscreen.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -24,7 +25,7 @@ data class BrowseFocus(val genre: Genre?, val videoId: String? = null, val actio
 data class ScrollPosition(val index: Int = 0, val offset: Int = 0)
 
 class BrowseViewModel(private val catalog: VideoCatalog,
-    private val exposure: (List<VideoSummary>) -> Unit = {}) : ViewModel() {
+    private val exposure: (List<VideoSummary>) -> Unit = {}, private val ranked: () -> Unit = {}) : ViewModel() {
     private val mutable = MutableStateFlow(listOf(BrowseRow(null, recommended = true)) + Genre.entries.map { BrowseRow(it) })
     val rows = mutable.asStateFlow()
     private val playerMutable = MutableStateFlow(BrowseRow(null, recommended = true))
@@ -40,6 +41,20 @@ class BrowseViewModel(private val catalog: VideoCatalog,
     private var contextVideo: VideoSummary? = null
     private var related = emptyList<VideoSummary>()
     private var rankingJob: Job? = null
+    private val rankingMutex = Mutex()
+    private val revision = AtomicLong()
+    private var rankingPending = false
+    private var homeActive = false
+    private var allowReorder = true
+    private var loadRevision = 0L
+    private var preparedPool: RecommendationPool? = null
+    private var preparedInputs: Triple<Map<Genre, List<VideoSummary>>, List<VideoSummary>, List<VideoSummary>>? = null
+    private var topicRotation = 0
+    private data class SourceKey(val genres: List<Genre>, val topic: String?)
+    private var attemptedKey: SourceKey? = null
+    private var loadKey: SourceKey? = null
+    private val impressions = RecommendationImpressions()
+    private val exposedIds = mutableSetOf<String>()
     private var rotation = ((System.currentTimeMillis() / 86_400_000) % Genre.entries.size).toInt()
     private var learning = true
     private var finished = emptySet<String>()
@@ -50,57 +65,121 @@ class BrowseViewModel(private val catalog: VideoCatalog,
     val horizontal = mutableMapOf<String, ScrollPosition>()
     var personalized = false; private set
     fun arrange(profile: GenrePreferences, enabled: Boolean, completed: List<String> = emptyList(), interests: InterestProfile = InterestProfile()) {
-        this.profile = profile; this.interests = interests; learning = enabled; finished = completed.take(100).toSet()
+        val oldKey = sourceKey()
+        val nextFinished = completed.take(100).toSet()
+        val changed = this.profile.scores != profile.scores || learning != enabled || finished != nextFinished ||
+            this.interests !== interests
+        this.profile = profile; this.interests = interests; learning = enabled; finished = nextFinished
         personalized = enabled && (profile.personalized || interests.personalized)
-        rebuildRecommended()
+        if (changed) rebuildRecommended()
+        if (oldKey != sourceKey()) {
+            recommendedJob?.cancel(); recommendedJob = null; loadKey = null
+            mutable.value = mutable.value.map { if (it.recommended) it.copy(loaded = false, busy = false) else it }
+            if (homeActive) loadRow("recommended")
+        }
     }
-    private fun sources() = profile.recommendationSources(learning, rotation).take(if (learning && interests.discoveryQuery() != null) 3 else 4)
-    fun exposed() { exposure(mutable.value.first().videos) }
+    private fun sourceKey(): SourceKey {
+        val topic = interests.discoveryQuery(topicRotation).takeIf { learning }
+        return SourceKey(profile.recommendationSources(learning, rotation).take(if (topic != null) 3 else 4), topic)
+    }
+    fun enterHome() {
+        homeActive = true; allowReorder = true; impressions.clear(); exposedIds.clear()
+        rebuildRecommended(); loadRow("recommended")
+    }
+    fun leaveHome() { homeActive = false; impressions.update(emptySet(), 0) }
+    fun exposeVisible(ids: Set<String>, nowMs: Long) {
+        if (!learning || !homeActive) return
+        recordExposures(impressions.update(ids, nowMs))
+    }
+    fun selected(video: VideoSummary) {
+        if (learning && homeActive && mutable.value.first().videos.any { it.id == video.id } && impressions.selected(video.id.value))
+            recordExposures(setOf(video.id.value))
+    }
+    private fun recordExposures(ids: Set<String>) {
+        val fresh = ids.filter { exposedIds.size < 96 && exposedIds.add(it) }.toSet()
+        if (fresh.isNotEmpty()) {
+            val videos = mutable.value.first().videos.filter { it.id.value in fresh }
+            interests = interests.exposed(videos) // Next visit uses these hints; no self-triggered rerank.
+            exposure(videos)
+        }
+    }
     suspend fun awaitRanking() { rankingJob?.join() }
     fun context(video: VideoSummary, related: List<VideoSummary> = emptyList()) {
-        contextVideo = video; this.related = related.take(32); rebuildRecommended()
+        val bounded = related.take(32)
+        if (contextVideo == video && this.related == bounded) return
+        contextVideo = video; this.related = bounded; rebuildRecommended()
     }
     fun clearContext(id: VideoId) {
-        if (contextVideo?.id == id) { contextVideo = null; related = emptyList(); playerMutable.value = BrowseRow(null, recommended = true) }
+        if (contextVideo?.id == id) {
+            contextVideo = null; related = emptyList(); playerMutable.value = BrowseRow(null, recommended = true)
+            rebuildRecommended()
+        }
     }
+    private class ObsoleteRanking : RuntimeException()
     private fun rebuildRecommended() {
-        val catalogs = mutable.value.filter { it.genre != null }.associate { it.genre!! to it.videos }
-        val snapshotProfile = profile; val snapshotInterests = interests; val snapshotLearning = learning
-        val snapshotFinished = finished; val snapshotRotation = rotation
-        val snapshotContext = contextVideo; val snapshotRelated = related
-        val extras = topicCache?.takeIf { learning && it.first == interests.discoveryQuery() }?.second.orEmpty()
-        rankingJob?.cancel()
+        revision.incrementAndGet(); rankingPending = true
+        if (rankingJob?.isActive == true) return
         rankingJob = viewModelScope.launch {
-        val selections = withContext(Dispatchers.Default) {
-            RecommendedVideos.select(snapshotProfile, snapshotLearning, catalogs, snapshotFinished,
-                interests = snapshotInterests, extras = extras, rotation = snapshotRotation) to
-                snapshotContext?.let { RecommendedVideos.select(snapshotProfile, snapshotLearning, catalogs, snapshotFinished,
-                    limit = 12, interests = snapshotInterests, extras = snapshotRelated.ifEmpty { extras }, context = it,
-                    rotation = snapshotRotation) }
-        }
-        ensureActive()
-        val selected = selections.first
-        var cards = selected.map { it.video }
-        val anchor = focus?.takeIf { it.rowKey == "recommended" && !it.action }
-        // Keep the exact return target at its prior column while the other cards adapt.
-        val pinned = mutable.value.first().videos.firstOrNull { it.id.value == anchor?.videoId }
-        if (pinned != null && anchor != null && snapshotInterests.permits(pinned) && pinned.id.value !in snapshotFinished) {
-            val revised = cards.filterNot { it.id == pinned.id }.toMutableList()
-            revised.add(anchor.column.coerceIn(0, revised.size), pinned)
-            cards = revised.take(24)
-        }
-        val origins = selected.mapNotNull { it.genre?.let { genre -> it.video.id.value to genre } }.toMap().toMutableMap()
-        if (pinned != null) mutable.value.first().origins[pinned.id.value]?.let { origins[pinned.id.value] = it }
-        val ready = sources().all { genre -> mutable.value.first { it.genre == genre }.loaded } &&
-            (!learning || interests.discoveryQuery() == null || (topicLoaded && topicAttempted == interests.discoveryQuery()))
-        val error = sources().firstNotNullOfOrNull { genre -> mutable.value.first { it.genre == genre }.error }
-        mutable.value = mutable.value.map { if (it.recommended) it.copy(videos = cards, origins = origins,
-            loaded = ready, learned = personalized, error = error) else it }
-        selections.second?.takeIf { contextVideo?.id == snapshotContext?.id }?.let { selectedPlayer ->
-            playerMutable.value = BrowseRow(null, selectedPlayer.map { it.video }, loaded = ready || snapshotRelated.isNotEmpty(),
-                busy = mutable.value.first().busy && snapshotRelated.isEmpty(), error = error.takeIf { selectedPlayer.isEmpty() },
-                recommended = true, origins = selectedPlayer.mapNotNull { item -> item.genre?.let { item.video.id.value to it } }.toMap(), learned = personalized, contextual = true)
-        }
+            while (rankingPending) {
+                rankingPending = false
+                val version = revision.get()
+                val catalogs = mutable.value.filter { it.genre != null }.associate { it.genre!! to it.videos }
+                val snapshotProfile = profile; val snapshotInterests = interests; val snapshotLearning = learning
+                val snapshotFinished = finished; val snapshotRotation = rotation
+                val snapshotContext = contextVideo; val snapshotRelated = related
+                val extras = topicCache?.takeIf { it.first == sourceKey().topic }?.second.orEmpty()
+                val selections = try {
+                    withContext(Dispatchers.Default) {
+                        rankingMutex.withLock {
+                            val job = currentCoroutineContext()
+                            val check = { job.ensureActive(); if (version != revision.get()) throw ObsoleteRanking() }
+                            val inputs = Triple(catalogs, extras, snapshotRelated)
+                            val pool = if (preparedInputs == inputs) preparedPool!! else {
+                                RecommendationPool(catalogs, extras, snapshotRelated, check).also {
+                                    preparedPool = it; preparedInputs = inputs
+                                }
+                            }
+                            RecommendedVideos.select(snapshotProfile, snapshotLearning, pool, snapshotFinished,
+                                interests = snapshotInterests, rotation = snapshotRotation, check = check) to
+                                snapshotContext?.let { RecommendedVideos.select(snapshotProfile, snapshotLearning, pool,
+                                    snapshotFinished, limit = 12, interests = snapshotInterests, context = it,
+                                    rotation = snapshotRotation, check = check) }
+                        }
+                    }
+                } catch (_: ObsoleteRanking) { continue }
+                ensureActive()
+                if (version != revision.get()) continue
+                ranked()
+                val selected = selections.first
+                var cards = selected.map { it.video }
+                val previous = mutable.value.first()
+                val eligible = { video: VideoSummary -> snapshotInterests.permits(video) && video.id.value !in snapshotFinished && !video.live }
+                if (homeActive && contentFocused && !allowReorder) {
+                    // Retain the visible visit order; remove ineligible entries immediately and append new candidates.
+                    cards = (previous.videos.filter(eligible) + cards).distinctBy { it.id }.take(24)
+                } else {
+                    val anchor = focus?.takeIf { it.rowKey == "recommended" && !it.action }
+                    val pinned = previous.videos.firstOrNull { it.id.value == anchor?.videoId && eligible(it) }
+                    if (pinned != null && anchor != null) {
+                        val revised = cards.filterNot { it.id == pinned.id }.toMutableList()
+                        revised.add(anchor.column.coerceIn(0, revised.size), pinned); cards = revised.take(24)
+                    }
+                }
+                allowReorder = false
+                val origins = previous.origins + selected.mapNotNull { item -> item.genre?.let { item.video.id.value to it } }.toMap()
+                val key = sourceKey()
+                val ready = attemptedKey == key
+                val error = key.genres.firstNotNullOfOrNull { genre -> mutable.value.first { it.genre == genre }.error }
+                mutable.value = mutable.value.map { if (it.recommended) it.copy(videos = cards,
+                    origins = origins.filterKeys { id -> cards.any { it.id.value == id } }, loaded = ready,
+                    learned = personalized, error = error) else it }
+                selections.second?.takeIf { contextVideo?.id == snapshotContext?.id }?.let { player ->
+                    playerMutable.value = BrowseRow(null, player.map { it.video }, loaded = ready || snapshotRelated.isNotEmpty(),
+                        busy = previous.busy && snapshotRelated.isEmpty(), error = error.takeIf { player.isEmpty() },
+                        recommended = true, origins = player.mapNotNull { item -> item.genre?.let { item.video.id.value to it } }.toMap(),
+                        learned = personalized, contextual = true)
+                }
+            }
         }
     }
     fun continueWatching(entries: List<UnfinishedVideo>) {
@@ -116,51 +195,53 @@ class BrowseViewModel(private val catalog: VideoCatalog,
         }
     }
     private fun update(genre: Genre, transform: (BrowseRow) -> BrowseRow) {
+        val before = mutable.value.first { it.genre == genre }
         mutable.value = mutable.value.map { if (it.genre == genre) transform(it) else it }
-        rebuildRecommended()
+        if (before.videos != mutable.value.first { it.genre == genre }.videos) rebuildRecommended()
     }
     fun loadRow(key: String, more: Boolean = false, retry: Boolean = false) {
         if (key != "recommended") { load(Genre.entries.firstOrNull { it.name == key }, more, retry); return }
-        if (recommendedJob?.isActive == true || (mutable.value.first().loaded && !retry)) return
-        val refresh = retry && mutable.value.first().error == null
-        if (refresh) rotation = (rotation + 1) % Genre.entries.size
+        if (retry && recommendedJob?.isActive != true && mutable.value.first().error == null) {
+            rotation = (rotation + 1) % Genre.entries.size; topicRotation++
+            allowReorder = true; contentFocused = false // Explicit refresh is a stable publication boundary.
+        }
+        val sources = sourceKey()
+        if (recommendedJob?.isActive == true && loadKey == sources) return
+        if (attemptedKey == sources && !retry) return
+        recommendedJob?.cancel()
+        loadKey = sources
         val current = generation
+        val loadVersion = ++loadRevision
         mutable.value = mutable.value.map { if (it.recommended) it.copy(busy = true, error = null) else it }
         recommendedJob = viewModelScope.launch {
             try {
-                for (genre in sources()) {
+                for (genre in sources.genres) {
                     ensureActive()
-                    val existingJob = jobs[genre]
-                    if (existingJob?.isActive == true) existingJob.join()
+                    jobs[genre]?.takeIf { it.isActive }?.join()
                     val row = mutable.value.first { it.genre == genre }
-                    if (!row.loaded || refresh || (retry && row.error != null)) {
-                        load(genre, retry = retry)
-                        jobs[genre]?.join()
-                    }
+                    if (!row.loaded || (retry && row.error != null)) { load(genre, retry = retry); jobs[genre]?.join() }
                 }
-                val topicQuery = interests.discoveryQuery().takeIf { learning }
-                if (topicQuery != null && (topicCache?.first != topicQuery || refresh)) {
-                    // One optional metadata-derived topic search replaces a genre request (total <= 4).
+                val query = sources.topic
+                if (query != null && (topicCache?.first != query || retry) &&
+                    (topicAttempted != query || retry)) {
                     try {
-                        val page = queue.withLock { ensureActive(); catalog.search(topicQuery, null) }
+                        val page = queue.withLock { ensureActive(); catalog.search(query, null) }
                         ensureActive()
-                        if (current != generation) return@launch
-                        topicCache = topicQuery to page.videos.take(30)
+                        if (current != generation || sources != sourceKey()) return@launch
+                        topicCache = query to page.videos.take(30)
                     } catch (e: CancellationException) { throw e }
-                    catch (_: Exception) { /* Genre caches remain a usable fallback; no automatic retry loop. */ }
-                    topicLoaded = true; topicAttempted = topicQuery; rebuildRecommended()
+                    catch (_: Exception) { /* Keep eligible cached recommendations; retry is explicit. */ }
+                    topicLoaded = true; topicAttempted = query
                 }
                 ensureActive()
-                if (current != generation) return@launch
-                // Loaded means the background-selected cards have reached the UI state.
-                rankingJob?.join()
-                ensureActive()
-                if (current != generation) return@launch
-                val errors = sources().mapNotNull { genre -> mutable.value.first { it.genre == genre }.error }
-                mutable.value = mutable.value.map { if (it.recommended) it.copy(busy = false, loaded = true,
-                    error = errors.firstOrNull()) else it }
+                if (current != generation || sources != sourceKey()) return@launch
+                attemptedKey = sources
+                rebuildRecommended(); rankingJob?.join()
             } finally {
-                if (current == generation) mutable.value = mutable.value.map { if (it.recommended) it.copy(busy = false) else it }
+                if (current == generation && loadVersion == loadRevision && loadKey == sources) {
+                    mutable.value = mutable.value.map { if (it.recommended) it.copy(busy = false) else it }
+                    playerMutable.value = playerMutable.value.copy(busy = false)
+                }
             }
         }
     }
@@ -196,13 +277,14 @@ class BrowseViewModel(private val catalog: VideoCatalog,
         }
     }
     fun cancel() {
-        generation++; recommendedJob?.cancel(); jobs.values.forEach { it.cancel() }; jobs.clear(); catalog.cancelPending()
+        generation++; revision.incrementAndGet(); rankingJob?.cancel(); rankingPending = false; recommendedJob?.cancel(); jobs.values.forEach { it.cancel() }; jobs.clear(); catalog.cancelPending()
         mutable.value = mutable.value.map { it.copy(busy = false) }
         playerMutable.value = playerMutable.value.copy(busy = false)
     }
     fun clear() {
         cancel(); rankingJob?.cancel(); focus = null; contentFocused = false; vertical = ScrollPosition(); horizontal.clear()
         mutable.value = listOf(BrowseRow(null, recommended = true)) + Genre.entries.map { BrowseRow(it) }
+        attemptedKey = null; loadKey = null; preparedPool = null; preparedInputs = null; impressions.clear(); exposedIds.clear()
         topicCache = null; topicLoaded = false; topicAttempted = null; contextVideo = null; related = emptyList(); playerMutable.value = BrowseRow(null, recommended = true)
     }
     override fun onCleared() { cancel() }

@@ -22,7 +22,7 @@ class InterestsTest {
         val original = InterestProfile().feedback(video(1), RecommendationFeedback.MORE)
         assertSame(original, original.watched(video(1), 9_000, 9_000))
         val early = original.watched(video(1), 15_000, 600_000)
-        assertTrue(early.channels.getValue("creator 1") < original.channels.getValue("creator 1"))
+        assertSame(original, early)
         assertTrue(InterestProfile().watched(video(1), 15_000, 18_000).personalized)
     }
 
@@ -79,7 +79,7 @@ class InterestsTest {
     @Test fun unseenVideosRotateAheadOfPreviouslyShownWithoutPermanentlyRemovingThem() {
         val candidates = (0..39).map { video(it) }
         val shown = InterestProfile().exposed(candidates.take(24))
-        val ranked = InterestRanking.rank(candidates, shown, false)
+        val ranked = InterestRanking.rank(candidates, shown, true)
         assertTrue(ranked.take(16).all { it.id.value !in shown.shown })
         assertEquals(40, ranked.size)
         assertNotEquals(InterestRanking.rank(candidates, InterestProfile(), false).first(),

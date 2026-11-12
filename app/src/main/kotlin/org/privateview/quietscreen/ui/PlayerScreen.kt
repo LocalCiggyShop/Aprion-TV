@@ -24,6 +24,7 @@ import kotlinx.coroutines.isActive
 import org.privateview.quietscreen.AppSettings
 import org.privateview.quietscreen.core.StreamResolver
 import org.privateview.quietscreen.core.VideoSummary
+import org.privateview.quietscreen.core.WatchOutcome
 import org.privateview.quietscreen.core.WatchTime
 import org.privateview.quietscreen.core.Genre
 import org.privateview.quietscreen.core.GenreClassifier
@@ -40,7 +41,9 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
     feedback: (VideoSummary, RecommendationFeedback) -> Unit = { _, _ -> },
     metadata: (VideoSummary) -> Unit = {},
     openChannel: ((VideoSummary) -> Unit)? = null,
-    playNext: (VideoSummary, Genre?) -> Unit = { _, _ -> }, back: () -> Unit) {
+    playNext: (VideoSummary, Genre?) -> Unit = { _, _ -> },
+    autoplayStarted: Boolean = false, outcome: (WatchOutcome, Genre?) -> Unit = { _, _ -> },
+    autoNext: ((VideoSummary, Genre?) -> Unit)? = null, back: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -66,6 +69,8 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
     var released by remember { mutableStateOf(false) }
     val watchTime = remember(controller) { WatchTime() }
     val recordWatch by rememberUpdatedState(watched)
+    val recordOutcome by rememberUpdatedState(outcome)
+    var sought by remember(controller) { mutableStateOf(false) }
     val recordProgress by rememberUpdatedState(progress)
     val recordMetadata by rememberUpdatedState(metadata)
     var checkpoint by remember { mutableLongStateOf(0) }
@@ -129,22 +134,26 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
                 if (!released) watchTime.sample(android.os.SystemClock.elapsedRealtime(), controller.player.currentPosition.coerceAtLeast(0), isPlaying)
             }
             override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                if (reason == Player.DISCONTINUITY_REASON_SEEK || reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) sought = true
                 watchTime.discontinuity()
             }
         }
         controller.player.addListener(watchListener)
-        fun release() {
+        fun release(interrupted: Boolean = false) {
             if (released) return
             watchTime.sample(android.os.SystemClock.elapsedRealtime(), controller.player.currentPosition.coerceAtLeast(0), false)
             recordProgress(controller.player.currentPosition.coerceAtLeast(0), knownDuration(),
                 controller.player.playbackState == Player.STATE_ENDED, detectedGenre())
             recordWatch(watchTime.watchedMs, knownDuration(), detectedGenre())
+            recordOutcome(WatchOutcome(watchTime.watchedMs, knownDuration(), autoplayStarted,
+                controller.player.playbackState == Player.STATE_ENDED, interrupted,
+                controller.player.playerError != null, sought), detectedGenre())
             controller.player.removeListener(watchListener)
             released = true; view.player = null; controller.release()
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
-        exit.release = ::release
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) release() }
+        exit.release = { release() }
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) release(interrupted = true) }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer); release(); recommendations?.clearContext(video.id) }
     }
@@ -172,6 +181,7 @@ fun PlayerScreen(video: VideoSummary, resolver: StreamResolver, settings: AppSet
             }, setPlaying = { play -> if (!released) { if (play) controller.player.play() else controller.player.pause() } },
             seek = { delta -> if (!released) controller.seekBy(delta) },
             playNext = { next, genre -> if (!released && next.id != video.id) { exit.release(); playNext(next, genre) } },
+            autoNext = autoNext?.let { next -> { target, genre -> if (!released) { exit.release(); next(target, genre) } } },
             back = ::leavePlayer, retry = { if (!released) controller.start(video.id, settings.maxHeight, startPositionMs = position.takeIf { it > 0 } ?: startPositionMs) },
             qualityChoices = { listOf("Auto (up to ${settings.maxHeight}p)" to { controller.selectQuality(null, settings.maxHeight) }) +
                 controller.qualityHeights().map { height -> "${height}p" to { controller.selectQuality(height, settings.maxHeight) } } },

@@ -4,16 +4,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RecommendationsTest {
-    @Test fun repeatedEnjoymentOutweighsOneLongWatchAndEarlyExitsReduceOnlyThatGenre() {
+    @Test fun repeatedEnjoymentOutweighsOneLongWatchAndAmbiguousExitsDoNotReducePreferences() {
         val long = GenrePreferences().watched(Genre.SCIENCE, 600_000, 600_000)
         var repeated = GenrePreferences()
         repeat(3) { repeated = repeated.watched(Genre.SCIENCE, 120_000, 120_000) }
         assertTrue(repeated.scores.getValue(Genre.SCIENCE) > long.scores.getValue(Genre.SCIENCE))
         val initial = GenrePreferences(mapOf(Genre.SCIENCE to 20.0, Genre.MUSIC to 18.0))
         val skipped = initial.watched(Genre.SCIENCE, 15_000, 600_000)
-        assertTrue(skipped.scores.getValue(Genre.SCIENCE) < initial.scores.getValue(Genre.SCIENCE))
+        assertSame(initial, skipped)
         assertEquals(18.0, skipped.scores.getValue(Genre.MUSIC), 0.0)
-        assertEquals(Genre.MUSIC, skipped.order().first())
+        assertEquals(Genre.SCIENCE, skipped.order().first())
     }
     @Test fun diverseStartAndBoundedLearningPreserveAllGenres() {
         val initial = GenrePreferences()
